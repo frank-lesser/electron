@@ -15,8 +15,6 @@
 #include "content/public/common/page_zoom.h"
 #include "net/base/url_util.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(atom::WebContentsZoomController);
-
 namespace atom {
 
 WebContentsZoomController::WebContentsZoomController(
@@ -279,5 +277,7 @@ void WebContentsZoomController::SetZoomFactorOnNavigationIfNeeded(
 
   SetZoomLevel(zoom_level);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsZoomController)
 
 }  // namespace atom

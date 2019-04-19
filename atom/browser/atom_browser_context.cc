@@ -11,7 +11,6 @@
 #include "atom/browser/atom_download_manager_delegate.h"
 #include "atom/browser/atom_paths.h"
 #include "atom/browser/atom_permission_manager.h"
-#include "atom/browser/browser.h"
 #include "atom/browser/cookie_change_notifier.h"
 #include "atom/browser/net/resolve_proxy_helper.h"
 #include "atom/browser/pref_store_delegate.h"
@@ -20,17 +19,14 @@
 #include "atom/browser/web_view_manager.h"
 #include "atom/browser/zoom_level_delegate.h"
 #include "atom/common/application_info.h"
-#include "atom/common/atom_version.h"
 #include "atom/common/options_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/chrome_version.h"
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/prefs/json_pref_store.h"
@@ -40,24 +36,17 @@
 #include "components/prefs/value_map_pref_store.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
-#include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"  // nogncheck
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/user_agent.h"
 #include "net/base/escape.h"
+#include "services/network/public/cpp/features.h"
 
 using content::BrowserThread;
 
 namespace atom {
 
 namespace {
-
-std::string RemoveWhitespace(const std::string& str) {
-  std::string trimmed;
-  if (base::RemoveChars(str, " ", &trimmed))
-    return trimmed;
-  else
-    return str;
-}
 
 // Convert string to lower case and escape it.
 std::string MakePartitionName(const std::string& input) {
@@ -78,19 +67,7 @@ AtomBrowserContext::AtomBrowserContext(const std::string& partition,
       storage_policy_(new SpecialStoragePolicy),
       in_memory_(in_memory),
       weak_factory_(this) {
-  // Construct user agent string.
-  Browser* browser = Browser::Get();
-  std::string name = RemoveWhitespace(browser->GetName());
-  std::string user_agent;
-  if (name == ATOM_PRODUCT_NAME) {
-    user_agent = "Chrome/" CHROME_VERSION_STRING " " ATOM_PRODUCT_NAME
-                 "/" ATOM_VERSION_STRING;
-  } else {
-    user_agent = base::StringPrintf(
-        "%s/%s Chrome/%s " ATOM_PRODUCT_NAME "/" ATOM_VERSION_STRING,
-        name.c_str(), browser->GetVersion().c_str(), CHROME_VERSION_STRING);
-  }
-  user_agent_ = content::BuildUserAgentFromProduct(user_agent);
+  user_agent_ = GetApplicationUserAgent();
 
   // Read options.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
@@ -116,8 +93,12 @@ AtomBrowserContext::AtomBrowserContext(const std::string& partition,
   // Initialize Pref Registry.
   InitPrefs();
 
-  proxy_config_monitor_ = std::make_unique<ProxyConfigMonitor>(prefs_.get());
-  io_handle_ = new URLRequestContextGetter::Handle(weak_factory_.GetWeakPtr());
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    proxy_config_monitor_ = std::make_unique<ProxyConfigMonitor>(prefs_.get());
+    io_handle_ =
+        new URLRequestContextGetter::Handle(weak_factory_.GetWeakPtr());
+  }
+
   cookie_change_notifier_ = std::make_unique<CookieChangeNotifier>(this);
 
   BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(this);
@@ -127,7 +108,13 @@ AtomBrowserContext::~AtomBrowserContext() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   NotifyWillBeDestroyed(this);
   ShutdownStoragePartitions();
-  io_handle_->ShutdownOnUIThread();
+
+  BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
+                            std::move(resource_context_));
+
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
+    io_handle_->ShutdownOnUIThread();
+
   // Notify any keyed services of browser context destruction.
   BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
       this);
@@ -169,22 +156,42 @@ void AtomBrowserContext::SetUserAgent(const std::string& user_agent) {
 net::URLRequestContextGetter* AtomBrowserContext::CreateRequestContext(
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector protocol_interceptors) {
-  return io_handle_
-      ->CreateMainRequestContextGetter(protocol_handlers,
-                                       std::move(protocol_interceptors))
-      .get();
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    return io_handle_
+        ->CreateMainRequestContextGetter(protocol_handlers,
+                                         std::move(protocol_interceptors))
+        .get();
+  } else {
+    NOTREACHED();
+    return nullptr;
+  }
 }
 
 net::URLRequestContextGetter* AtomBrowserContext::CreateMediaRequestContext() {
-  return io_handle_->GetMainRequestContextGetter().get();
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    return io_handle_->GetMainRequestContextGetter().get();
+  } else {
+    NOTREACHED();
+    return nullptr;
+  }
 }
 
 net::URLRequestContextGetter* AtomBrowserContext::GetRequestContext() {
-  return GetDefaultStoragePartition(this)->GetURLRequestContext();
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    return GetDefaultStoragePartition(this)->GetURLRequestContext();
+  } else {
+    NOTREACHED();
+    return nullptr;
+  }
 }
 
 network::mojom::NetworkContextPtr AtomBrowserContext::GetNetworkContext() {
-  return io_handle_->GetNetworkContext();
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    return io_handle_->GetNetworkContext();
+  } else {
+    NOTREACHED();
+    return nullptr;
+  }
 }
 
 base::FilePath AtomBrowserContext::GetPath() const {
@@ -204,7 +211,13 @@ int AtomBrowserContext::GetMaxCacheSize() const {
 }
 
 content::ResourceContext* AtomBrowserContext::GetResourceContext() {
-  return io_handle_->GetResourceContext();
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    return io_handle_->GetResourceContext();
+  } else {
+    if (!resource_context_)
+      resource_context_.reset(new content::ResourceContext);
+    return resource_context_.get();
+  }
 }
 
 std::string AtomBrowserContext::GetMediaDeviceIDSalt() {
@@ -282,6 +295,11 @@ AtomBrowserContext::GetBackgroundSyncController() {
 
 content::BrowsingDataRemoverDelegate*
 AtomBrowserContext::GetBrowsingDataRemoverDelegate() {
+  return nullptr;
+}
+
+content::ClientHintsControllerDelegate*
+AtomBrowserContext::GetClientHintsControllerDelegate() {
   return nullptr;
 }
 

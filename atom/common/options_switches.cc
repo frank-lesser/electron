@@ -154,15 +154,18 @@ const char kAllowRunningInsecureContent[] = "allowRunningInsecureContent";
 
 const char kOffscreen[] = "offscreen";
 
+const char kNodeIntegrationInSubFrames[] = "nodeIntegrationInSubFrames";
+
+// Disable window resizing when HTML Fullscreen API is activated.
+const char kDisableHtmlFullscreenWindowResize[] =
+    "disableHtmlFullscreenWindowResize";
+
 }  // namespace options
 
 namespace switches {
 
 // Enable chromium sandbox.
 const char kEnableSandbox[] = "enable-sandbox";
-
-// Enable sandbox in only remote content windows.
-const char kEnableMixedSandbox[] = "enable-mixed-sandbox";
 
 // Enable plugins.
 const char kEnablePlugins[] = "enable-plugins";
@@ -180,10 +183,19 @@ const char kDisableHttpCache[] = "disable-http-cache";
 const char kStandardSchemes[] = "standard-schemes";
 
 // Register schemes to handle service worker.
-const char kRegisterServiceWorkerSchemes[] = "register-service-worker-schemes";
+const char kServiceWorkerSchemes[] = "service-worker-schemes";
 
 // Register schemes as secure.
 const char kSecureSchemes[] = "secure-schemes";
+
+// Register schemes as bypassing CSP.
+const char kBypassCSPSchemes[] = "bypasscsp-schemes";
+
+// Register schemes as support fetch API.
+const char kFetchSchemes[] = "fetch-schemes";
+
+// Register schemes as CORS enabled.
+const char kCORSSchemes[] = "cors-schemes";
 
 // The browser process app model ID
 const char kAppUserModelId[] = "app-user-model-id";
@@ -207,6 +219,14 @@ const char kWebviewTag[] = "webview-tag";
 
 // Command switch passed to renderer process to control nodeIntegration.
 const char kNodeIntegrationInWorker[] = "node-integration-in-worker";
+
+// Command switch passed to renderer process to control whether node
+// environments will be created in sub-frames.
+const char kNodeIntegrationInSubFrames[] = "node-integration-in-subframes";
+
+// Disable window resizing when HTML Fullscreen API is activated.
+const char kDisableHtmlFullscreenWindowResize[] =
+    "disable-html-fullscreen-window-resize";
 
 // Widevine options
 // Path to Widevine CDM binaries.

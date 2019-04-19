@@ -7,10 +7,10 @@
 #include <memory>
 #include <set>
 #include <sstream>
-#include <string>
 
 #include "atom/browser/ui/views/submenu_button.h"
 #include "atom/common/keyboard_util.h"
+#include "ui/aura/window.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/box_layout.h"
@@ -119,7 +119,9 @@ bool MenuBar::GetMenuButtonFromScreenPoint(const gfx::Point& screenPoint,
 }
 
 void MenuBar::OnBeforeExecuteCommand() {
-  RemovePaneFocus();
+  if (GetPaneFocusTraversable() != nullptr) {
+    RemovePaneFocus();
+  }
   window_->RestoreFocus();
 }
 
@@ -175,6 +177,27 @@ bool MenuBar::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 bool MenuBar::SetPaneFocus(views::View* initial_focus) {
+  // TODO(zcbenz): Submit patch to upstream Chromium to fix the crash.
+  //
+  // Without this check, Electron would crash when running tests.
+  //
+  // Check failed: rules_->CanFocusWindow(window, nullptr).
+  //   logging::LogMessage::~LogMessage
+  //   wm::FocusController::SetFocusedWindow
+  //   wm::FocusController::ResetFocusWithinActiveWindow
+  //   views::View::OnFocus
+  //   views::Button::OnFocus
+  //   views::LabelButton::OnFocus
+  //   views::View::Focus
+  //   views::FocusManager::SetFocusedViewWithReason
+  //   views::AccessiblePaneView::SetPaneFocus
+  //   atom::MenuBar::SetPaneFocus
+  if (initial_focus && initial_focus->GetWidget()) {
+    aura::Window* window = initial_focus->GetWidget()->GetNativeWindow();
+    if (!window || !window->GetRootWindow())
+      return false;
+  }
+
   bool result = views::AccessiblePaneView::SetPaneFocus(initial_focus);
 
   if (result) {
@@ -268,13 +291,11 @@ void MenuBar::RefreshColorCache(const ui::NativeTheme* theme) {
     theme = ui::NativeTheme::GetInstanceForNativeUi();
   if (theme) {
 #if defined(USE_X11)
-    const std::string menubar_selector = "GtkMenuBar#menubar";
-    background_color_ = libgtkui::GetBgColor(menubar_selector);
-
-    enabled_color_ = theme->GetSystemColor(
-        ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor);
-    disabled_color_ = theme->GetSystemColor(
-        ui::NativeTheme::kColorId_DisabledMenuItemForegroundColor);
+    background_color_ = libgtkui::GetBgColor("GtkMenuBar#menubar");
+    enabled_color_ = libgtkui::GetFgColor(
+        "GtkMenuBar#menubar GtkMenuItem#menuitem GtkLabel");
+    disabled_color_ = libgtkui::GetFgColor(
+        "GtkMenuBar#menubar GtkMenuItem#menuitem:disabled GtkLabel");
 #else
     background_color_ =
         theme->GetSystemColor(ui::NativeTheme::kColorId_MenuBackgroundColor);

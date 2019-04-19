@@ -19,11 +19,11 @@ class GURL;
 
 namespace platform_util {
 
-typedef base::Callback<void(const std::string&)> OpenExternalCallback;
+typedef base::OnceCallback<void(const std::string&)> OpenExternalCallback;
 
 // Show the given file in a file manager. If possible, select the file.
 // Must be called from the UI thread.
-bool ShowItemInFolder(const base::FilePath& full_path);
+void ShowItemInFolder(const base::FilePath& full_path);
 
 // Open the given file in the desktop's default manner.
 // Must be called from the UI thread.
@@ -52,7 +52,7 @@ void OpenExternal(
     const GURL& url,
 #endif
     const OpenExternalOptions& options,
-    const OpenExternalCallback& callback);
+    OpenExternalCallback callback);
 
 // Move a file to trash.
 bool MoveItemToTrash(const base::FilePath& full_path);
@@ -61,7 +61,7 @@ void Beep();
 
 #if defined(OS_MACOSX)
 bool GetLoginItemEnabled();
-void SetLoginItemEnabled(bool enabled);
+bool SetLoginItemEnabled(bool enabled);
 #endif
 
 #if defined(OS_LINUX)

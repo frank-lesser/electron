@@ -4,9 +4,8 @@
 
 #include "atom/browser/api/atom_api_view.h"
 
-#include "native_mate/dictionary.h"
-
 #include "atom/common/node_includes.h"
+#include "native_mate/dictionary.h"
 
 namespace atom {
 
@@ -76,8 +75,9 @@ void Initialize(v8::Local<v8::Object> exports,
   v8::Isolate* isolate = context->GetIsolate();
   View::SetConstructor(isolate, base::Bind(&View::New));
 
-  mate::Dictionary constructor(isolate,
-                               View::GetConstructor(isolate)->GetFunction());
+  mate::Dictionary constructor(
+      isolate,
+      View::GetConstructor(isolate)->GetFunction(context).ToLocalChecked());
 
   mate::Dictionary dict(isolate, exports);
   dict.Set("View", constructor);
@@ -85,4 +85,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_view, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_view, Initialize)

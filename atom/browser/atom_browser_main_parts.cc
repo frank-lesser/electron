@@ -23,10 +23,11 @@
 #include "atom/browser/media/media_capture_devices_dispatcher.h"
 #include "atom/browser/node_debugger.h"
 #include "atom/browser/ui/devtools_manager_delegate.h"
-#include "atom/common/api/atom_bindings.h"
+#include "atom/common/api/electron_bindings.h"
 #include "atom/common/application_info.h"
 #include "atom/common/asar/asar_util.h"
 #include "atom/common/node_bindings.h"
+#include "atom/common/node_includes.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -45,11 +46,10 @@
 #include "electron/buildflags/buildflags.h"
 #include "media/base/localized_strings.h"
 #include "services/device/public/mojom/constants.mojom.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/idle/idle.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/material_design/material_design_controller.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 
 #if defined(USE_AURA)
@@ -73,8 +73,11 @@
 
 #if defined(OS_WIN)
 #include "ui/base/cursor/cursor_loader_win.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_win.h"
+#include "ui/display/win/dpi.h"
 #include "ui/gfx/platform_font_win.h"
+#include "ui/strings/grit/app_locale_settings.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -88,9 +91,6 @@
 #include "device/bluetooth/dbus/dbus_bluez_manager_wrapper_linux.h"
 #endif
 
-// Must be included after all other headers.
-#include "atom/common/node_includes.h"
-
 namespace atom {
 
 namespace {
@@ -102,12 +102,17 @@ void Erase(T* container, typename T::iterator iter) {
 
 #if defined(OS_WIN)
 // gfx::Font callbacks
-void AdjustUIFont(LOGFONT* logfont) {
-  l10n_util::AdjustUIFont(logfont);
+void AdjustUIFont(gfx::PlatformFontWin::FontAdjustment* font_adjustment) {
+  l10n_util::NeedOverrideDefaultUIFont(&font_adjustment->font_family_override,
+                                       &font_adjustment->font_scale);
+  font_adjustment->font_scale *= display::win::GetAccessibilityFontScale();
 }
 
 int GetMinimumFontSize() {
-  return 10;
+  int min_font_size;
+  base::StringToInt(l10n_util::GetStringUTF16(IDS_MINIMUM_UI_FONT_SIZE),
+                    &min_font_size);
+  return min_font_size;
 }
 #endif
 
@@ -196,36 +201,18 @@ void AtomBrowserMainParts::InitializeFeatureList() {
   auto* cmd_line = base::CommandLine::ForCurrentProcess();
   auto enable_features =
       cmd_line->GetSwitchValueASCII(::switches::kEnableFeatures);
-  // Node depends on SharedArrayBuffer support, which was temporarily disabled
-  // by https://chromium-review.googlesource.com/c/chromium/src/+/849429 (in
-  // M64) and reenabled by
-  // https://chromium-review.googlesource.com/c/chromium/src/+/1159358 (in
-  // M70). Once Electron upgrades to M70, we can remove this.
-  enable_features += std::string(",") + features::kSharedArrayBuffer.name;
   auto disable_features =
       cmd_line->GetSwitchValueASCII(::switches::kDisableFeatures);
-#if defined(OS_MACOSX)
-  // Disable the V2 sandbox on macOS.
-  // Chromium is going to use the system sandbox API of macOS for the sandbox
-  // implmentation, we may have to deprecate --mixed-sandbox for macOS once
-  // Chromium drops support for the old sandbox implmentation.
-  disable_features += std::string(",") + features::kMacV2Sandbox.name;
-#endif
+  // Disable creation of spare renderer process with site-per-process mode,
+  // it interferes with our process preference tracking for non sandboxed mode.
+  // Can be reenabled when our site instance policy is aligned with chromium
+  // when node integration is enabled.
+  disable_features +=
+      std::string(",") + features::kSpareRendererForSitePerProcess.name;
   auto feature_list = std::make_unique<base::FeatureList>();
   feature_list->InitializeFromCommandLine(enable_features, disable_features);
   base::FeatureList::SetInstance(std::move(feature_list));
 }
-
-#if !defined(OS_MACOSX)
-void AtomBrowserMainParts::OverrideAppLogsPath() {
-  base::FilePath path;
-  if (base::PathService::Get(DIR_APP_DATA, &path)) {
-    path = path.Append(base::FilePath::FromUTF8Unsafe(GetApplicationName()));
-    path = path.Append(base::FilePath::FromUTF8Unsafe("logs"));
-    base::PathService::Override(DIR_APP_LOGS, path);
-  }
-}
-#endif
 
 // static
 AtomBrowserMainParts* AtomBrowserMainParts::self_ = nullptr;
@@ -235,7 +222,7 @@ AtomBrowserMainParts::AtomBrowserMainParts(
     : fake_browser_process_(new BrowserProcessImpl),
       browser_(new Browser),
       node_bindings_(NodeBindings::Create(NodeBindings::BROWSER)),
-      atom_bindings_(new AtomBindings(uv_default_loop())),
+      electron_bindings_(new ElectronBindings(uv_default_loop())),
       main_function_params_(params) {
   DCHECK(!self_) << "Cannot have two AtomBrowserMainParts";
   self_ = this;
@@ -283,13 +270,9 @@ void AtomBrowserMainParts::RegisterDestructionCallback(
   destructors_.insert(destructors_.begin(), std::move(callback));
 }
 
-bool AtomBrowserMainParts::ShouldContentCreateFeatureList() {
-  return false;
-}
-
 int AtomBrowserMainParts::PreEarlyInitialization() {
   InitializeFeatureList();
-  OverrideAppLogsPath();
+  field_trial_list_ = std::make_unique<base::FieldTrialList>(nullptr);
 #if defined(USE_X11)
   views::LinuxUI::SetInstance(BuildGtkUi());
   OverrideLinuxAppDataPath();
@@ -327,7 +310,7 @@ void AtomBrowserMainParts::PostEarlyInitialization() {
   node_debugger_->Start();
 
   // Add Electron extended APIs.
-  atom_bindings_->BindTo(js_env_->isolate(), env->process_object());
+  electron_bindings_->BindTo(js_env_->isolate(), env->process_object());
 
   // Load everything.
   node_bindings_->LoadEnvironment(env);
@@ -359,9 +342,6 @@ int AtomBrowserMainParts::PreCreateThreads() {
     layout_provider_.reset(new views::LayoutProvider());
 
   // Initialize the app locale.
-  AtomBrowserClient::SetApplicationLocale(
-      l10n_util::GetApplicationLocale(custom_locale_));
-
   fake_browser_process_->SetApplicationLocale(
       AtomBrowserClient::Get()->GetApplicationLocale());
 
@@ -400,8 +380,8 @@ void AtomBrowserMainParts::ToolkitInitialized() {
 #endif
 
 #if defined(OS_WIN)
-  gfx::PlatformFontWin::adjust_font_callback = &AdjustUIFont;
-  gfx::PlatformFontWin::get_minimum_font_size_callback = &GetMinimumFontSize;
+  gfx::PlatformFontWin::SetAdjustFontCallback(&AdjustUIFont);
+  gfx::PlatformFontWin::SetGetMinimumFontSizeCallback(&GetMinimumFontSize);
 
   wchar_t module_name[MAX_PATH] = {0};
   if (GetModuleFileName(NULL, module_name, MAX_PATH))
@@ -420,6 +400,9 @@ void AtomBrowserMainParts::PreMainMessageLoopRun() {
   // a chance to setup everything.
   node_bindings_->PrepareMessageLoop();
   node_bindings_->RunMessageLoop();
+
+  // url::Add*Scheme are not threadsafe, this helps prevent data races.
+  url::LockSchemeRegistries();
 
 #if defined(USE_X11)
   ui::TouchFactory::SetTouchDeviceListFromCommandLine();
@@ -460,7 +443,7 @@ bool AtomBrowserMainParts::MainMessageLoopRun(int* result_code) {
 
 void AtomBrowserMainParts::PreDefaultMainMessageLoopRun(
     base::OnceClosure quit_closure) {
-  Browser::SetMainMessageLoopQuitClosure(std::move(quit_closure));
+  Browser::Get()->SetMainMessageLoopQuitClosure(std::move(quit_closure));
 }
 
 void AtomBrowserMainParts::PostMainMessageLoopStart() {
@@ -514,29 +497,6 @@ void AtomBrowserMainParts::PreMainMessageLoopStart() {
 #endif
 
 void AtomBrowserMainParts::PreMainMessageLoopStartCommon() {
-  // Initialize ui::ResourceBundle.
-  ui::ResourceBundle::InitSharedInstanceWithLocale(
-      "", nullptr, ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
-  auto* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kLang)) {
-    const std::string locale = cmd_line->GetSwitchValueASCII(switches::kLang);
-    const base::FilePath locale_file_path =
-        ui::ResourceBundle::GetSharedInstance().GetLocaleFilePath(locale, true);
-    if (!locale_file_path.empty()) {
-      custom_locale_ = locale;
-#if defined(OS_LINUX)
-      /* When built with USE_GLIB, libcc's GetApplicationLocaleInternal() uses
-       * glib's g_get_language_names(), which keys off of getenv("LC_ALL") */
-      g_setenv("LC_ALL", custom_locale_.c_str(), TRUE);
-#endif
-    }
-  }
-
-#if defined(OS_MACOSX)
-  if (custom_locale_.empty())
-    l10n_util::OverrideLocaleWithCocoaLocale();
-#endif
-  LoadResourceBundle(custom_locale_);
 #if defined(OS_MACOSX)
   InitializeMainNib();
 #endif

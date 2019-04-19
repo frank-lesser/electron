@@ -15,7 +15,7 @@
 #include "widevine_cdm_version.h"  // NOLINT(build/include)
 
 #if defined(WIDEVINE_CDM_AVAILABLE)
-#include "chrome/renderer/media/chrome_key_systems_provider.h"
+#include "chrome/renderer/media/chrome_key_systems_provider.h"  // nogncheck
 #endif
 
 namespace atom {
@@ -32,13 +32,20 @@ class RendererClientBase : public content::ContentRendererClient {
   virtual void WillReleaseScriptContext(v8::Handle<v8::Context> context,
                                         content::RenderFrame* render_frame) = 0;
   virtual void DidClearWindowObject(content::RenderFrame* render_frame);
-  virtual void SetupMainWorldOverrides(v8::Handle<v8::Context> context) = 0;
+  virtual void SetupMainWorldOverrides(v8::Handle<v8::Context> context,
+                                       content::RenderFrame* render_frame) = 0;
+  virtual void SetupExtensionWorldOverrides(v8::Handle<v8::Context> context,
+                                            content::RenderFrame* render_frame,
+                                            int world_id) = 0;
 
   bool isolated_world() const { return isolated_world_; }
 
   // Get the context that the Electron API is running in.
   v8::Local<v8::Context> GetContext(blink::WebLocalFrame* frame,
                                     v8::Isolate* isolate) const;
+  // Executes a given v8 Script
+  static v8::Local<v8::Value> RunScript(v8::Local<v8::Context> context,
+                                        v8::Local<v8::String> source);
 
  protected:
   void AddRenderBindings(v8::Isolate* isolate,
@@ -57,6 +64,7 @@ class RendererClientBase : public content::ContentRendererClient {
       std::vector<std::unique_ptr<::media::KeySystemProperties>>* key_systems)
       override;
   bool IsKeySystemsUpdateNeeded() override;
+  void DidSetUserAgent(const std::string& user_agent) override;
 
  private:
   std::unique_ptr<PreferencesManager> preferences_manager_;

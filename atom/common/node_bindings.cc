@@ -14,6 +14,7 @@
 #include "atom/common/api/locker.h"
 #include "atom/common/atom_command_line.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/base_paths.h"
 #include "base/command_line.h"
 #include "base/environment.h"
@@ -27,8 +28,6 @@
 #include "content/public/common/content_paths.h"
 #include "electron/buildflags/buildflags.h"
 #include "native_mate/dictionary.h"
-
-#include "atom/common/node_includes.h"
 
 #define ELECTRON_BUILTIN_MODULES(V)          \
   V(atom_browser_app)                        \
@@ -58,6 +57,7 @@
   V(atom_browser_window)                     \
   V(atom_common_asar)                        \
   V(atom_common_clipboard)                   \
+  V(atom_common_command_line)                \
   V(atom_common_crash_reporter)              \
   V(atom_common_features)                    \
   V(atom_common_native_image)                \
@@ -74,6 +74,7 @@
   V(atom_browser_label_button)   \
   V(atom_browser_layout_manager) \
   V(atom_browser_md_text_button) \
+  V(atom_browser_resize_area)    \
   V(atom_browser_text_field)
 
 #define ELECTRON_DESKTOP_CAPTURER_MODULE(V) V(atom_browser_desktop_capturer)
@@ -82,7 +83,7 @@
 // __attribute__((constructor)), we call the _register_<modname>
 // function for each built-in modules explicitly. This is only
 // forward declaration. The definitions are in each module's
-// implementation when calling the NODE_BUILTIN_MODULE_CONTEXT_AWARE.
+// implementation when calling the NODE_LINKED_MODULE_CONTEXT_AWARE.
 #define V(modname) void _register_##modname();
 ELECTRON_BUILTIN_MODULES(V)
 #if BUILDFLAG(ENABLE_VIEW_API)

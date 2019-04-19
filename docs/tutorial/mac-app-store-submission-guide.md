@@ -4,7 +4,7 @@ Since v0.34.0, Electron allows submitting packaged apps to the Mac App Store
 (MAS). This guide provides information on: how to submit your app and the
 limitations of the MAS build.
 
-**Note:** Submitting an app to Mac App Store requires enrolling [Apple Developer
+**Note:** Submitting an app to Mac App Store requires enrolling in the [Apple Developer
 Program][developer-program], which costs money.
 
 ## How to Submit Your App
@@ -33,7 +33,7 @@ After finishing the preparation work, you can package your app by following
 signing your app.
 
 First, you have to add a `ElectronTeamID` key to your app's `Info.plist`, which
-has your Team ID as value:
+has your Team ID as its value:
 
 ```xml
 <plist version="1.0">
@@ -72,7 +72,9 @@ Then, you need to prepare three entitlements files.
     <key>com.apple.security.app-sandbox</key>
     <true/>
     <key>com.apple.security.application-groups</key>
-    <string>TEAM_ID.your.bundle.id</string>
+    <array>
+      <string>TEAM_ID.your.bundle.id</string>
+    </array>
   </dict>
 </plist>
 ```
@@ -149,7 +151,7 @@ Also note that native modules may have intermediate files produced which should
 not be included (as they would also need to be signed). If you use
 [electron-packager][electron-packager] before version 8.1.0, add
 `--ignore=.+\.o$` to your build step to ignore these files. Versions 8.1.0 and
-later ignores those files by default.
+later ignore those files by default.
 
 ### Upload Your App
 
@@ -227,9 +229,10 @@ more details.
 
 ## Cryptographic Algorithms Used by Electron
 
-Depending on the country and region you are located, Mac App Store may require
-documenting the cryptographic algorithms used in your app, and even ask you to
-submit a copy of U.S. Encryption Registration (ERN) approval.
+Depending on the countries in which you are releasing your app, you may be
+required to provide information on the cryptographic algorithms used in your
+software. See the [encryption export compliance docs][export-compliance] for
+more information.
 
 Electron uses following cryptographic algorithms:
 
@@ -257,10 +260,6 @@ Electron uses following cryptographic algorithms:
 * RC5 - http://people.csail.mit.edu/rivest/Rivest-rc5rev.pdf
 * RIPEMD - [ISO/IEC 10118-3](https://webstore.ansi.org/RecordDetail.aspx?sku=ISO%2FIEC%2010118-3:2004)
 
-On how to get the ERN approval, you can reference the article: [How to legally
-submit an app to Apple’s App Store when it uses encryption (or how to obtain an
-ERN)][ern-tutorial].
-
 [developer-program]: https://developer.apple.com/support/compare-memberships/
 [submitting-your-app]: https://developer.apple.com/library/mac/documentation/IDEs/Conceptual/AppDistributionGuide/SubmittingYourApp/SubmittingYourApp.html
 [nwjs-guide]: https://github.com/nwjs/nw.js/wiki/Mac-App-Store-%28MAS%29-Submission-Guideline#first-steps
@@ -270,7 +269,7 @@ ERN)][ern-tutorial].
 [electron-packager]: https://github.com/electron-userland/electron-packager
 [submit-for-review]: https://developer.apple.com/library/ios/documentation/LanguagesUtilities/Conceptual/iTunesConnect_Guide/Chapters/SubmittingTheApp.html
 [app-sandboxing]: https://developer.apple.com/app-sandboxing/
-[ern-tutorial]: https://carouselapps.com/2015/12/15/legally-submit-app-apples-app-store-uses-encryption-obtain-ern/
+[export-compliance]: https://help.apple.com/app-store-connect/#/devc3f64248f
 [temporary-exception]: https://developer.apple.com/library/mac/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/AppSandboxTemporaryExceptionEntitlements.html
 [user-selected]: https://developer.apple.com/library/mac/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html#//apple_ref/doc/uid/TP40011195-CH4-SW6
 [network-access]: https://developer.apple.com/library/ios/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html#//apple_ref/doc/uid/TP40011195-CH4-SW9

@@ -4,8 +4,6 @@ process.throwDeprecation = false
 const electron = require('electron')
 const { app, BrowserWindow, crashReporter, dialog, ipcMain, protocol, webContents } = electron
 
-const { Coverage } = require('electabul')
-
 const fs = require('fs')
 const path = require('path')
 const util = require('util')
@@ -85,15 +83,6 @@ global.permissionChecks = {
   reject: () => electron.session.defaultSession.setPermissionCheckHandler(() => false)
 }
 
-const coverage = new Coverage({
-  outputPath: path.join(__dirname, '..', '..', 'out', 'coverage')
-})
-coverage.setup()
-
-ipcMain.on('get-main-process-coverage', function (event) {
-  event.returnValue = global.__coverage__ || null
-})
-
 global.isCi = !!argv.ci
 if (global.isCi) {
   process.removeAllListeners('uncaughtException')
@@ -108,16 +97,25 @@ global.nativeModulesEnabled = !process.env.ELECTRON_SKIP_NATIVE_MODULE_TESTS
 // Register app as standard scheme.
 global.standardScheme = 'app'
 global.zoomScheme = 'zoom'
-protocol.registerStandardSchemes([global.standardScheme, global.zoomScheme], { secure: true })
+protocol.registerSchemesAsPrivileged([
+  { scheme: global.standardScheme, privileges: { standard: true, secure: true } },
+  { scheme: global.zoomScheme, privileges: { standard: true, secure: true } },
+  { scheme: 'cors', privileges: { corsEnabled: true, supportFetchAPI: true } },
+  { scheme: 'cors-blob', privileges: { corsEnabled: true, supportFetchAPI: true } },
+  { scheme: 'no-cors', privileges: { supportFetchAPI: true } },
+  { scheme: 'no-fetch', privileges: { corsEnabled: true } }
+])
 
 app.on('window-all-closed', function () {
   app.quit()
 })
 
-app.on('web-contents-created', (event, contents) => {
-  contents.on('crashed', (event, killed) => {
-    console.log(`webContents ${contents.id} crashed: ${contents.getURL()} (killed=${killed})`)
-  })
+app.on('gpu-process-crashed', (event, killed) => {
+  console.log(`GPU process crashed (killed=${killed})`)
+})
+
+app.on('renderer-process-crashed', (event, contents, killed) => {
+  console.log(`webContents ${contents.id} crashed: ${contents.getURL()} (killed=${killed})`)
 })
 
 app.on('ready', function () {
@@ -135,7 +133,9 @@ app.on('ready', function () {
     width: 800,
     height: 600,
     webPreferences: {
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      nodeIntegration: true,
+      webviewTag: true
     }
   })
   window.loadFile('static/index.html', {
@@ -244,23 +244,44 @@ app.on('ready', function () {
   })
 })
 
-ipcMain.on('handle-next-remote-require', function (event, modulesMap = {}) {
-  event.sender.once('remote-require', (event, moduleName) => {
-    event.preventDefault()
-    if (modulesMap.hasOwnProperty(moduleName)) {
-      event.returnValue = modulesMap[moduleName]
-    }
+ipcMain.on('handle-next-ipc-message-sync', function (event, returnValue) {
+  event.sender.once('ipc-message-sync', (event, channel, args) => {
+    event.returnValue = returnValue
   })
 })
 
-ipcMain.on('handle-next-remote-get-global', function (event, globalsMap = {}) {
-  event.sender.once('remote-get-global', (event, globalName) => {
-    event.preventDefault()
-    if (globalsMap.hasOwnProperty(globalName)) {
-      event.returnValue = globalsMap[globalName]
-    }
+for (const eventName of [
+  'remote-require',
+  'remote-get-global',
+  'remote-get-builtin'
+]) {
+  ipcMain.on(`handle-next-${eventName}`, function (event, valuesMap = {}) {
+    event.sender.once(eventName, (event, name) => {
+      if (valuesMap.hasOwnProperty(name)) {
+        event.returnValue = valuesMap[name]
+      } else {
+        event.preventDefault()
+      }
+    })
   })
-})
+}
+
+for (const eventName of [
+  'desktop-capturer-get-sources',
+  'remote-get-current-window',
+  'remote-get-current-web-contents',
+  'remote-get-guest-web-contents'
+]) {
+  ipcMain.on(`handle-next-${eventName}`, function (event, returnValue) {
+    event.sender.once(eventName, (event) => {
+      if (returnValue) {
+        event.returnValue = returnValue
+      } else {
+        event.preventDefault()
+      }
+    })
+  })
+}
 
 ipcMain.on('set-client-certificate-option', function (event, skip) {
   app.once('select-client-certificate', function (event, webContents, url, list, callback) {

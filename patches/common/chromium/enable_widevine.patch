@@ -8,15 +8,15 @@ Electron needs that flag to be enabled on those paltforms,
 but there's no way to conditionally set it during a `gn gen` call.
 
 diff --git a/third_party/widevine/cdm/widevine.gni b/third_party/widevine/cdm/widevine.gni
-index 82a93622585a424f56c3567050f9ba4822de6c1e..cbd10bed9f3bdbeb61ec5daa2f8d0e158549b7fd 100644
+index 1fe47e92ffb1442159ead7b696884bc8cc4bda83..72b39b83789cd1f67e10c743a3e729420c9b72ed 100644
 --- a/third_party/widevine/cdm/widevine.gni
 +++ b/third_party/widevine/cdm/widevine.gni
-@@ -7,7 +7,7 @@ import("//media/media_options.gni")
- 
- declare_args() {
-   # Allow Widevine key system support in Chromium.
--  enable_widevine = false
-+  enable_widevine = is_mac || is_win
+@@ -10,7 +10,7 @@ declare_args() {
+   # on Android.
+   # Can be optionally enabled in Chromium on non-Android platforms. Please see
+   # //src/third_party/widevine/LICENSE file for details.
+-  enable_widevine = is_chrome_branded || is_android
++  enable_widevine = is_chrome_branded || is_android || is_mac || is_win
  }
  
- enable_widevine_cdm_host_verification =
+ # Widevine CDM is available as a library CDM on the following platforms and

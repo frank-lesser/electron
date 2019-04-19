@@ -8,7 +8,7 @@
 
 #include "atom/browser/api/atom_api_web_contents.h"
 #include "atom/common/native_mate_converters/gurl_converter.h"
-#include "content/browser/web_contents/web_contents_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"  // nogncheck
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -38,11 +38,13 @@ void WebViewGuestDelegate::AttachToIframe(
   DCHECK_EQ(embedder_web_contents_,
             content::WebContents::FromRenderFrameHost(embedder_frame));
 
+  content::WebContents* guest_web_contents = api_web_contents_->web_contents();
   // Attach this inner WebContents |guest_web_contents| to the outer
   // WebContents |embedder_web_contents|. The outer WebContents's
   // frame |embedder_frame| hosts the inner WebContents.
-  api_web_contents_->web_contents()->AttachToOuterWebContentsFrame(
-      embedder_web_contents_, embedder_frame);
+  embedder_web_contents_->AttachInnerWebContents(
+      base::WrapUnique<content::WebContents>(guest_web_contents),
+      embedder_frame);
 
   ResetZoomController();
 

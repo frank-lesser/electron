@@ -6,15 +6,14 @@
 
 #include <string>
 
-#include "base/task_scheduler/post_task.h"
+#include "atom/common/node_includes.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/common/service_manager_connection.h"
 #include "native_mate/dictionary.h"
 #include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-
-#include "atom/common/node_includes.h"
 
 namespace mate {
 
@@ -151,4 +150,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_power_save_blocker, Initialize);
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_power_save_blocker, Initialize)

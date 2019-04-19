@@ -87,6 +87,8 @@ class NativeWindowMac : public NativeWindow {
   std::string GetTitle() override;
   void FlashFrame(bool flash) override;
   void SetSkipTaskbar(bool skip) override;
+  void SetExcludedFromShownWindowsMenu(bool excluded) override;
+  bool IsExcludedFromShownWindowsMenu() override;
   void SetSimpleFullScreen(bool simple_fullscreen) override;
   bool IsSimpleFullScreen() override;
   void SetKiosk(bool kiosk) override;
@@ -102,12 +104,13 @@ class NativeWindowMac : public NativeWindow {
   bool IsDocumentEdited() override;
   void SetIgnoreMouseEvents(bool ignore, bool forward) override;
   void SetContentProtection(bool enable) override;
-  void SetBrowserView(NativeBrowserView* browser_view) override;
+  void AddBrowserView(NativeBrowserView* browser_view) override;
+  void RemoveBrowserView(NativeBrowserView* browser_view) override;
   void SetParentWindow(NativeWindow* parent) override;
   gfx::NativeView GetNativeView() const override;
   gfx::NativeWindow GetNativeWindow() const override;
   gfx::AcceleratedWidget GetAcceleratedWidget() const override;
-  std::tuple<void*, int> GetNativeWindowHandlePointer() const override;
+  NativeWindowHandle GetNativeWindowHandle() const override;
   void SetProgressBar(double progress, const ProgressState state) override;
   void SetOverlayIcon(const gfx::Image& overlay,
                       const std::string& description) override;
@@ -167,8 +170,6 @@ class NativeWindowMac : public NativeWindow {
   void AddContentViewLayers();
 
   void InternalSetParentWindow(NativeWindow* parent, bool attach);
-  void ShowWindowButton(NSWindowButton button);
-
   void SetForwardMouseMessages(bool forward);
 
   AtomNSWindow* window_;  // Weak ref, managed by widget_.

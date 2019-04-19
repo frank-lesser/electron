@@ -14,6 +14,8 @@
 #include "base/command_line.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_request_info.h"
@@ -99,7 +101,7 @@ void ToDictionary(base::DictionaryValue* details, net::URLRequest* request) {
   FillRequestDetails(details, request);
   details->SetInteger("id", request->identifier());
   details->SetDouble("timestamp", base::Time::Now().ToDoubleT() * 1000);
-  const auto* info = content::ResourceRequestInfo::ForRequest(request);
+  auto* info = content::ResourceRequestInfo::ForRequest(request);
   if (info) {
     details->SetString("resourceType",
                        ResourceTypeToString(info->GetResourceType()));
@@ -147,9 +149,8 @@ void ToDictionary(base::DictionaryValue* details, const GURL& location) {
 }
 
 void ToDictionary(base::DictionaryValue* details,
-                  const net::HostPortPair& host_port) {
-  if (host_port.host().empty())
-    details->SetString("ip", host_port.host());
+                  const net::IPEndPoint& remote_endpoint) {
+  details->SetString("ip", remote_endpoint.ToStringWithoutPort());
 }
 
 void ToDictionary(base::DictionaryValue* details, bool from_cache) {
@@ -326,9 +327,9 @@ void AtomNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
   if (!base::ContainsKey(simple_listeners_, kOnBeforeRedirect))
     return;
 
-  HandleSimpleEvent(kOnBeforeRedirect, request, new_location,
-                    request->response_headers(), request->GetSocketAddress(),
-                    request->was_cached());
+  HandleSimpleEvent(
+      kOnBeforeRedirect, request, new_location, request->response_headers(),
+      request->GetResponseRemoteEndpoint(), request->was_cached());
 }
 
 void AtomNetworkDelegate::OnResponseStarted(net::URLRequest* request,
@@ -397,14 +398,16 @@ net::NetworkDelegate::AuthRequiredResponse AtomNetworkDelegate::OnAuthRequired(
 }
 
 bool AtomNetworkDelegate::OnCanGetCookies(const net::URLRequest& request,
-                                          const net::CookieList& cookie_list) {
+                                          const net::CookieList& cookie_list,
+                                          bool allowed_from_caller) {
   return true;
 }
 
 bool AtomNetworkDelegate::OnCanSetCookie(
     const net::URLRequest& request,
     const net::CanonicalCookie& cookie_line,
-    net::CookieOptions* options) {
+    net::CookieOptions* options,
+    bool allowed_from_caller) {
   return true;
 }
 
@@ -415,14 +418,10 @@ bool AtomNetworkDelegate::OnCanAccessFile(
   return true;
 }
 
-bool AtomNetworkDelegate::OnCanEnablePrivacyMode(
+bool AtomNetworkDelegate::OnForcePrivacyMode(
     const GURL& url,
     const GURL& first_party_for_cookies) const {
   return false;
-}
-
-bool AtomNetworkDelegate::OnAreExperimentalCookieFeaturesEnabled() const {
-  return true;
 }
 
 bool AtomNetworkDelegate::OnCancelURLRequestWithPolicyViolatingReferrerHeader(
@@ -487,8 +486,8 @@ int AtomNetworkDelegate::HandleResponseEvent(
   ResponseCallback response =
       base::Bind(&AtomNetworkDelegate::OnListenerResultInUI<Out>,
                  base::Unretained(this), request->identifier(), out);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(RunResponseListener, info.listener, std::move(details),
                      render_process_id, render_frame_id, response));
   return net::ERR_IO_PENDING;
@@ -509,8 +508,8 @@ void AtomNetworkDelegate::HandleSimpleEvent(SimpleEvent type,
   content::ResourceRequestInfo::GetRenderFrameForRequest(
       request, &render_process_id, &render_frame_id);
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(RunSimpleListener, info.listener, std::move(details),
                      render_process_id, render_frame_id));
 }
@@ -538,8 +537,8 @@ void AtomNetworkDelegate::OnListenerResultInUI(
     const base::DictionaryValue& response) {
   auto copy = base::DictionaryValue::From(
       base::Value::ToUniquePtrValue(response.Clone()));
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&AtomNetworkDelegate::OnListenerResultInIO<T>,
                      base::Unretained(this), id, out, std::move(copy)));
 }

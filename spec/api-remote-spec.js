@@ -28,7 +28,7 @@ describe('remote module', () => {
 
   afterEach(() => closeWindow(w).then(() => { w = null }))
 
-  describe('remote.getGlobal', () => {
+  describe('remote.getGlobal filtering', () => {
     it('can return custom values', () => {
       ipcRenderer.send('handle-next-remote-get-global', { test: 'Hello World!' })
       expect(remote.getGlobal('test')).to.be.equal('Hello World!')
@@ -36,11 +36,23 @@ describe('remote module', () => {
 
     it('throws when no returnValue set', () => {
       ipcRenderer.send('handle-next-remote-get-global')
-      expect(() => remote.getGlobal('process')).to.throw('Invalid global: process')
+      expect(() => remote.getGlobal('test')).to.throw(`Blocked remote.getGlobal('test')`)
     })
   })
 
-  describe('remote.require', () => {
+  describe('remote.getBuiltin filtering', () => {
+    it('can return custom values', () => {
+      ipcRenderer.send('handle-next-remote-get-builtin', { test: 'Hello World!' })
+      expect(remote.getBuiltin('test')).to.be.equal('Hello World!')
+    })
+
+    it('throws when no returnValue set', () => {
+      ipcRenderer.send('handle-next-remote-get-builtin')
+      expect(() => remote.getBuiltin('test')).to.throw(`Blocked remote.getBuiltin('test')`)
+    })
+  })
+
+  describe('remote.require filtering', () => {
     it('can return custom values', () => {
       ipcRenderer.send('handle-next-remote-require', { test: 'Hello World!' })
       expect(remote.require('test')).to.be.equal('Hello World!')
@@ -48,9 +60,11 @@ describe('remote module', () => {
 
     it('throws when no returnValue set', () => {
       ipcRenderer.send('handle-next-remote-require')
-      expect(() => remote.require('electron')).to.throw('Invalid module: electron')
+      expect(() => remote.require('test')).to.throw(`Blocked remote.require('test')`)
     })
+  })
 
+  describe('remote.require', () => {
     it('should returns same object for the same module', () => {
       const dialog1 = remote.require('electron')
       const dialog2 = remote.require('electron')
@@ -184,7 +198,7 @@ describe('remote module', () => {
       assert.strictEqual(typeof remote.app.getPath, 'function')
       assert.strictEqual(typeof remote.webContents.getFocusedWebContents, 'function')
       assert.strictEqual(typeof remote.clipboard.readText, 'function')
-      assert.strictEqual(typeof remote.shell.openExternal, 'function')
+      assert.strictEqual(typeof remote.shell.openExternalSync, 'function')
     })
 
     it('returns toString() of original function via toString()', () => {
@@ -429,9 +443,10 @@ describe('remote module', () => {
     })
 
     it('emits unhandled rejection events in the renderer process', (done) => {
-      window.addEventListener('unhandledrejection', function (event) {
+      window.addEventListener('unhandledrejection', function handler (event) {
         event.preventDefault()
         assert.strictEqual(event.reason.message, 'rejected')
+        window.removeEventListener('unhandledrejection', handler)
         done()
       })
 
@@ -447,6 +462,30 @@ describe('remote module', () => {
       const contents1 = remote.getCurrentWindow().webContents
       const contents2 = remote.getCurrentWebContents()
       assert(contents1 === contents2)
+    })
+  })
+
+  describe('remote.getCurrentWindow filtering', () => {
+    it('can return custom value', () => {
+      ipcRenderer.send('handle-next-remote-get-current-window', 'Hello World!')
+      expect(remote.getCurrentWindow()).to.be.equal('Hello World!')
+    })
+
+    it('throws when no returnValue set', () => {
+      ipcRenderer.send('handle-next-remote-get-current-window')
+      expect(() => remote.getCurrentWindow()).to.throw('Blocked remote.getCurrentWindow()')
+    })
+  })
+
+  describe('remote.getCurrentWebContents filtering', () => {
+    it('can return custom value', () => {
+      ipcRenderer.send('handle-next-remote-get-current-web-contents', 'Hello World!')
+      expect(remote.getCurrentWebContents()).to.be.equal('Hello World!')
+    })
+
+    it('throws when no returnValue set', () => {
+      ipcRenderer.send('handle-next-remote-get-current-web-contents')
+      expect(() => remote.getCurrentWebContents()).to.throw('Blocked remote.getCurrentWebContents()')
     })
   })
 
@@ -525,7 +564,7 @@ describe('remote module', () => {
       w = new BrowserWindow({
         show: false,
         webPreferences: {
-          preload: preload
+          preload
         }
       })
       w.once('closed', () => done())

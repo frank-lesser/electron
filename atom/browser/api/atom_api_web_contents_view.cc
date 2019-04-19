@@ -8,14 +8,13 @@
 #include "atom/browser/browser.h"
 #include "atom/browser/ui/inspectable_web_contents_view.h"
 #include "atom/common/api/constructor.h"
+#include "atom/common/node_includes.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "native_mate/dictionary.h"
 
 #if defined(OS_MACOSX)
 #include "atom/browser/ui/cocoa/delayed_native_view_host.h"
 #endif
-
-#include "atom/common/node_includes.h"
 
 namespace {
 
@@ -31,12 +30,14 @@ class WebContentsViewRelay
 
   atom::api::WebContentsView* view_ = nullptr;
 
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+
   DISALLOW_COPY_AND_ASSIGN(WebContentsViewRelay);
 };
 
-}  // namespace
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsViewRelay)
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(WebContentsViewRelay);
+}  // namespace
 
 namespace atom {
 
@@ -129,4 +130,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_web_contents_view, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_web_contents_view, Initialize)

@@ -15,7 +15,7 @@
 #include "base/logging.h"
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 
@@ -186,16 +186,15 @@ bool Archive::Init() {
     return false;
   }
 
-  std::string error;
-  base::JSONReader reader;
-  std::unique_ptr<base::Value> value(reader.ReadToValue(header));
+  base::Optional<base::Value> value = base::JSONReader::Read(header);
   if (!value || !value->is_dict()) {
-    LOG(ERROR) << "Failed to parse header: " << error;
+    LOG(ERROR) << "Failed to parse header";
     return false;
   }
 
   header_size_ = 8 + size;
-  header_.reset(static_cast<base::DictionaryValue*>(value.release()));
+  header_ = base::DictionaryValue::From(
+      std::make_unique<base::Value>(value->Clone()));
   return true;
 }
 

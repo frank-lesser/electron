@@ -11,8 +11,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/notification_event_dispatcher.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/common/notification_resources.h"
-#include "content/public/common/platform_notification_data.h"
+#include "third_party/blink/public/common/notifications/notification_resources.h"
+#include "third_party/blink/public/common/notifications/platform_notification_data.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace atom {
@@ -21,7 +21,7 @@ namespace {
 
 void OnWebNotificationAllowed(base::WeakPtr<Notification> notification,
                               const SkBitmap& icon,
-                              const content::PlatformNotificationData& data,
+                              const blink::PlatformNotificationData& data,
                               bool audio_muted,
                               bool allowed) {
   if (!notification)
@@ -82,8 +82,8 @@ void PlatformNotificationService::DisplayNotification(
     content::BrowserContext* browser_context,
     const std::string& notification_id,
     const GURL& origin,
-    const content::PlatformNotificationData& notification_data,
-    const content::NotificationResources& notification_resources) {
+    const blink::PlatformNotificationData& notification_data,
+    const blink::NotificationResources& notification_resources) {
   auto* presenter = browser_client_->GetNotificationPresenter();
   if (!presenter)
     return;
@@ -104,8 +104,8 @@ void PlatformNotificationService::DisplayPersistentNotification(
     const std::string& notification_id,
     const GURL& service_worker_scope,
     const GURL& origin,
-    const content::PlatformNotificationData& notification_data,
-    const content::NotificationResources& notification_resources) {}
+    const blink::PlatformNotificationData& notification_data,
+    const blink::NotificationResources& notification_resources) {}
 
 void PlatformNotificationService::ClosePersistentNotification(
     content::BrowserContext* browser_context,
@@ -122,12 +122,25 @@ void PlatformNotificationService::CloseNotification(
 
 void PlatformNotificationService::GetDisplayedNotifications(
     content::BrowserContext* browser_context,
-    const DisplayedNotificationsCallback& callback) {}
+    DisplayedNotificationsCallback callback) {}
 
 int64_t PlatformNotificationService::ReadNextPersistentNotificationId(
     content::BrowserContext* browser_context) {
   // Electron doesn't support persistent notifications.
   return 0;
+}
+
+void PlatformNotificationService::RecordNotificationUkmEvent(
+    content::BrowserContext* browser_context,
+    const content::NotificationDatabaseData& data) {}
+
+void PlatformNotificationService::ScheduleTrigger(
+    content::BrowserContext* browser_context,
+    base::Time timestamp) {}
+
+base::Time PlatformNotificationService::ReadNextTriggerTimestamp(
+    content::BrowserContext* browser_context) {
+  return base::Time::Max();
 }
 
 }  // namespace atom

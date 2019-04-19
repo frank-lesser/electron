@@ -320,6 +320,28 @@ describe('protocol module', () => {
       })
     })
 
+    it('sets custom headers', (done) => {
+      const handler = (request, callback) => callback({
+        path: filePath,
+        headers: { 'X-Great-Header': 'sogreat' }
+      })
+      protocol.registerFileProtocol(protocolName, handler, (error) => {
+        if (error) return done(error)
+        $.ajax({
+          url: protocolName + '://fake-host',
+          cache: false,
+          success: (data, status, request) => {
+            assert.strictEqual(data, String(fileContent))
+            assert.strictEqual(request.getResponseHeader('X-Great-Header'), 'sogreat')
+            done()
+          },
+          error: (xhr, errorType, error) => {
+            done(error)
+          }
+        })
+      })
+    })
+
     it('sends object as response', (done) => {
       const handler = (request, callback) => callback({ path: filePath })
       protocol.registerFileProtocol(protocolName, handler, (error) => {
@@ -632,45 +654,86 @@ describe('protocol module', () => {
         })
       })
     })
+
+    it('can handle large responses', async () => {
+      const data = Buffer.alloc(128 * 1024)
+      const handler = (request, callback) => {
+        callback(getStream(data.length, data))
+      }
+      await new Promise((resolve, reject) => {
+        protocol.registerStreamProtocol(protocolName, handler, err => {
+          if (err) return reject(err)
+          resolve()
+        })
+      })
+      const r = await new Promise((resolve, reject) => {
+        $.ajax({
+          url: protocolName + '://fake-host',
+          cache: false,
+          success: resolve,
+          error: (xhr, errorType, error) => {
+            reject(error || new Error(`Request failed: ${xhr.status}`))
+          }
+        })
+      })
+      assert.strictEqual(r.length, data.length)
+    })
   })
 
   describe('protocol.isProtocolHandled', () => {
-    it('returns true for about:', (done) => {
+    it('returns true for about:', async () => {
+      const result = await protocol.isProtocolHandled('about')
+      assert.strictEqual(result, true)
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('returns true for about: (callback)', (done) => {
       protocol.isProtocolHandled('about', (result) => {
         assert.strictEqual(result, true)
         done()
       })
     })
 
-    it('returns true for file:', (done) => {
+    it('returns true for file:', async () => {
+      const result = await protocol.isProtocolHandled('file')
+      assert.strictEqual(result, true)
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('returns true for file: (callback)', (done) => {
       protocol.isProtocolHandled('file', (result) => {
         assert.strictEqual(result, true)
         done()
       })
     })
 
-    it('returns true for http:', (done) => {
-      protocol.isProtocolHandled('http', (result) => {
-        assert.strictEqual(result, true)
-        done()
-      })
+    it('returns true for http:', async () => {
+      const result = await protocol.isProtocolHandled('http')
+      assert.strictEqual(result, true)
     })
 
-    it('returns true for https:', (done) => {
-      protocol.isProtocolHandled('https', (result) => {
-        assert.strictEqual(result, true)
-        done()
-      })
+    it('returns true for https:', async () => {
+      const result = await protocol.isProtocolHandled('https')
+      assert.strictEqual(result, true)
     })
 
-    it('returns false when scheme is not registered', (done) => {
-      protocol.isProtocolHandled('no-exist', (result) => {
-        assert.strictEqual(result, false)
-        done()
-      })
+    it('returns false when scheme is not registered', async () => {
+      const result = await protocol.isProtocolHandled('no-exist')
+      assert.strictEqual(result, false)
     })
 
     it('returns true for custom protocol', (done) => {
+      const emptyHandler = (request, callback) => callback()
+      protocol.registerStringProtocol(protocolName, emptyHandler, async (error) => {
+        assert.strictEqual(error, null)
+        const result = await protocol.isProtocolHandled(protocolName)
+        assert.strictEqual(result, true)
+        done()
+      })
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('returns true for custom protocol (callback)', (done) => {
       const emptyHandler = (request, callback) => callback()
       protocol.registerStringProtocol(protocolName, emptyHandler, (error) => {
         assert.strictEqual(error, null)
@@ -682,6 +745,17 @@ describe('protocol module', () => {
     })
 
     it('returns true for intercepted protocol', (done) => {
+      const emptyHandler = (request, callback) => callback()
+      protocol.interceptStringProtocol('http', emptyHandler, async (error) => {
+        assert.strictEqual(error, null)
+        const result = await protocol.isProtocolHandled('http')
+        assert.strictEqual(result, true)
+        done()
+      })
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('returns true for intercepted protocol (callback)', (done) => {
       const emptyHandler = (request, callback) => callback()
       protocol.interceptStringProtocol('http', emptyHandler, (error) => {
         assert.strictEqual(error, null)
@@ -1013,7 +1087,7 @@ describe('protocol module', () => {
     })
   })
 
-  describe('protocol.registerStandardSchemes', () => {
+  describe('protocol.registerSchemesAsPrivileged standard', () => {
     const standardScheme = remote.getGlobal('standardScheme')
     const origin = `${standardScheme}://fake-host`
     const imageURL = `${origin}/test.png`
@@ -1023,7 +1097,12 @@ describe('protocol module', () => {
     let success = null
 
     beforeEach(() => {
-      w = new BrowserWindow({ show: false })
+      w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
       success = false
     })
 
@@ -1109,5 +1188,103 @@ describe('protocol module', () => {
         w.loadURL(origin)
       })
     })
+  })
+
+  describe('protocol.registerSchemesAsPrivileged cors-fetch', function () {
+    const standardScheme = remote.getGlobal('standardScheme')
+    const fixtures = path.resolve(__dirname, 'fixtures')
+    let w = null
+
+    beforeEach((done) => {
+      protocol.unregisterProtocol(standardScheme, () => done())
+    })
+
+    afterEach((done) => {
+      closeWindow(w).then(() => {
+        w = null
+        done()
+      })
+    })
+
+    it('supports fetch api by default', (done) => {
+      const url = 'file://' + fixtures + '/assets/logo.png'
+      window.fetch(url)
+        .then(function (response) {
+          assert(response.ok)
+          done()
+        })
+        .catch(function (err) {
+          done('unexpected error : ' + err)
+        })
+    })
+
+    it('allows CORS requests by default', (done) => {
+      allowsCORSRequests('cors', 200, `<html>
+        <script>
+        const {ipcRenderer} = require('electron')
+        fetch('cors://myhost').then(function (response) {
+          ipcRenderer.send('response', response.status)
+        }).catch(function (response) {
+          ipcRenderer.send('response', 'failed')
+        })
+        </script>
+        </html>`, done)
+    })
+
+    it('disallows CORS, but allows fetch requests, when specified', (done) => {
+      allowsCORSRequests('no-cors', 'failed', `<html>
+        <script>
+        const {ipcRenderer} = require('electron')
+        fetch('no-cors://myhost').then(function (response) {
+          ipcRenderer.send('response', response.status)
+        }).catch(function (response) {
+          ipcRenderer.send('response', 'failed')
+        })
+        </script>
+        </html>`, done)
+    })
+
+    it('allows CORS, but disallows fetch requests, when specified', (done) => {
+      allowsCORSRequests('no-fetch', 'failed', `<html>
+        <script>
+        const {ipcRenderer} = require('electron')
+        fetch('no-fetch://myhost').then(function
+        (response) {
+          ipcRenderer.send('response', response.status)
+        }).catch(function (response) {
+          ipcRenderer.send('response', 'failed')
+        })
+        </script>
+        </html>`, done)
+    })
+
+    function allowsCORSRequests (corsScheme, expected, content, done) {
+      const url = standardScheme + '://fake-host'
+      w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
+
+      const handler = (request, callback) => {
+        callback({ data: content, mimeType: 'text/html' })
+      }
+      protocol.registerStringProtocol(standardScheme, handler, (error) => {
+        if (error) { return done(error) }
+      })
+
+      protocol.registerStringProtocol(corsScheme,
+        (request, callback) => {
+          callback('')
+        }, (error) => {
+          if (error) { return done(error) }
+          ipcMain.once('response', function (event, status) {
+            assert.strictEqual(status, expected)
+            protocol.unregisterProtocol(corsScheme, () => done())
+          })
+          w.loadURL(url)
+        })
+    }
   })
 })

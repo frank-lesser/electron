@@ -89,7 +89,7 @@ $ git branch --set-upstream-to=origin/master
 $ cd -
 ```
 
-:memo: `gclient` works by checking a file called `DEPS` inside the 
+:memo: `gclient` works by checking a file called `DEPS` inside the
 `src/electron` folder for dependencies (like Chromium or Node.js).
 Running `gclient sync -f` ensures that all dependencies required
 to build Electron match that file.
@@ -172,6 +172,18 @@ $ ./out/Debug/Electron.app/Contents/MacOS/Electron
 $ ./out/Debug/electron.exe
 # or, on Linux
 $ ./out/Debug/electron
+```
+
+### Packaging
+
+On linux, first strip the debugging and symbol information:
+```sh
+electron/script/strip-binaries.py -d out/Release
+```
+
+To package the electron build as a distributable zip file:
+```sh
+ninja -C out/Release electron:electron_dist_zip
 ```
 
 ### Cross-compiling

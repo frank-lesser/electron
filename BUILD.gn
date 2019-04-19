@@ -1,19 +1,22 @@
-import("build/asar.gni")
-import("build/npm.gni")
-import("buildflags/buildflags.gni")
-import("electron_paks.gni")
-import("filenames.gni")
 import("//build/config/locales.gni")
 import("//build/config/ui.gni")
 import("//build/config/win/manifest.gni")
 import("//pdf/features.gni")
-import("//services/service_manager/public/service_manifest.gni")
+import("//printing/buildflags/buildflags.gni")
 import("//third_party/ffmpeg/ffmpeg_options.gni")
 import("//tools/generate_library_loader/generate_library_loader.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/grit/repack.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 import("//v8/snapshot_toolchain.gni")
+import("build/asar.gni")
+import("build/js_wrap.gni")
+import("build/npm.gni")
+import("build/tsc.gni")
+import("buildflags/buildflags.gni")
+import("electron_paks.gni")
+import("filenames.auto.gni")
+import("filenames.gni")
 
 if (is_mac) {
   import("//build/config/mac/rules.gni")
@@ -53,65 +56,150 @@ config("branding") {
   ]
 }
 
-npm_action("atom_browserify_sandbox") {
+# We geneate the definitions twice here, once in //electron/electron.d.ts
+# and once in $target_gen_dir
+# The one in $target_gen_dir is used for the actual TSC build later one
+# and the one in //electron/electron.d.ts is used by your IDE (vscode)
+# for typescript prompting
+npm_action("build_electron_definitions") {
+  script = "gn-typescript-definitions"
+  args = [ rebase_path("$target_gen_dir/tsc/typings/electron.d.ts") ]
+  inputs = auto_filenames.api_docs + [ "package-lock.json" ]
+
+  outputs = [
+    "$target_gen_dir/tsc/typings/electron.d.ts",
+  ]
+}
+
+npm_action("atom_browserify_sandbox_unwrapped") {
+  script = "browserify"
   deps = [
-    ":atom_js2c_copy",
+    ":build_electron_definitions",
   ]
 
-  sandbox_args = [
+  inputs = auto_filenames.sandbox_browserify_deps
+
+  outputs = [
+    "$target_gen_dir/js2c/sandbox_bundle_unwrapped.js",
+  ]
+
+  args = [
     "lib/sandboxed_renderer/init.js",
     "-r",
     "./lib/sandboxed_renderer/api/exports/electron.js:electron",
-    "-r",
-    "./lib/sandboxed_renderer/api/exports/fs.js:fs",
-    "-r",
-    "./lib/sandboxed_renderer/api/exports/os.js:os",
-    "-r",
-    "./lib/sandboxed_renderer/api/exports/path.js:path",
-    "-r",
-    "./lib/sandboxed_renderer/api/exports/child_process.js:child_process",
     "-t",
     "aliasify",
+    "-p",
+    "[",
+    "tsify",
+    "-p",
+    "tsconfig.electron.json",
+    "]",
+    "--standalone",
+    "sandboxed_preload",
+    "-o",
+    rebase_path(outputs[0]),
   ]
-
-  inputs = [
-    "lib/sandboxed_renderer/init.js",
-    "lib/sandboxed_renderer/api/exports/electron.js",
-    "lib/sandboxed_renderer/api/exports/fs.js",
-    "lib/sandboxed_renderer/api/exports/os.js",
-    "lib/sandboxed_renderer/api/exports/path.js",
-    "lib/sandboxed_renderer/api/exports/child_process.js",
-  ]
-  outputs = [
-    "$target_gen_dir/js2c/preload_bundle.js",
-  ]
-
-  script = "browserify"
-  args = sandbox_args + [
-           "-o",
-           rebase_path(outputs[0]),
-         ]
 }
 
-npm_action("atom_browserify_isolated") {
+npm_action("atom_browserify_isolated_unwrapped") {
+  script = "browserify"
   deps = [
-    ":atom_js2c_copy",
+    ":build_electron_definitions",
+  ]
+
+  inputs = auto_filenames.isolated_browserify_deps
+
+  outputs = [
+    "$target_gen_dir/js2c/isolated_bundle_unwrapped.js",
+  ]
+
+  args = [
+    "lib/isolated_renderer/init.js",
+    "-t",
+    "aliasify",
+    "-p",
+    "[",
+    "tsify",
+    "-p",
+    "tsconfig.electron.json",
+    "]",
+    "--standalone",
+    "isolated_preload",
+    "-o",
+    rebase_path(outputs[0]),
+  ]
+}
+
+npm_action("atom_browserify_content_script_unwrapped") {
+  script = "browserify"
+  deps = [
+    ":build_electron_definitions",
+  ]
+
+  inputs = auto_filenames.context_script_browserify_deps
+
+  outputs = [
+    "$target_gen_dir/js2c/content_script_bundle_unwrapped.js",
+  ]
+
+  args = [
+    "lib/content_script/init.js",
+    "-t",
+    "aliasify",
+    "-p",
+    "[",
+    "tsify",
+    "-p",
+    "tsconfig.electron.json",
+    "]",
+    "--standalone",
+    "content_script_preload",
+    "-o",
+    rebase_path(outputs[0]),
+  ]
+}
+
+js_wrap("atom_browserify_content_script") {
+  deps = [
+    ":atom_browserify_content_script_unwrapped",
   ]
 
   inputs = [
-    "lib/isolated_renderer/init.js",
+    "$target_gen_dir/js2c/content_script_bundle_unwrapped.js",
   ]
+
+  outputs = [
+    "$target_gen_dir/js2c/content_script_bundle.js",
+  ]
+}
+
+js_wrap("atom_browserify_isolated") {
+  deps = [
+    ":atom_browserify_isolated_unwrapped",
+  ]
+
+  inputs = [
+    "$target_gen_dir/js2c/isolated_bundle_unwrapped.js",
+  ]
+
   outputs = [
     "$target_gen_dir/js2c/isolated_bundle.js",
   ]
+}
 
-  script = "browserify"
-  args = inputs + [
-           "-t",
-           "aliasify",
-           "-o",
-           rebase_path(outputs[0]),
-         ]
+js_wrap("atom_browserify_sandbox") {
+  deps = [
+    ":atom_browserify_sandbox_unwrapped",
+  ]
+
+  inputs = [
+    "$target_gen_dir/js2c/sandbox_bundle_unwrapped.js",
+  ]
+
+  outputs = [
+    "$target_gen_dir/js2c/sandbox_bundle.js",
+  ]
 }
 
 copy("atom_js2c_copy") {
@@ -126,31 +214,43 @@ copy("atom_js2c_copy") {
 
 action("atom_js2c") {
   deps = [
+    ":atom_browserify_content_script",
     ":atom_browserify_isolated",
     ":atom_browserify_sandbox",
     ":atom_js2c_copy",
   ]
 
-  js2c_sources = filenames.js2c_sources
-
   browserify_sources = [
+    "$target_gen_dir/js2c/content_script_bundle.js",
     "$target_gen_dir/js2c/isolated_bundle.js",
-    "$target_gen_dir/js2c/preload_bundle.js",
+    "$target_gen_dir/js2c/sandbox_bundle.js",
   ]
 
-  inputs = js2c_sources + browserify_sources
+  sources = browserify_sources + [
+              "$target_gen_dir/js2c/asar.js",
+              "$target_gen_dir/js2c/asar_init.js",
+            ]
 
+  inputs = sources
   outputs = [
-    "$target_gen_dir/atom_natives.h",
+    "$root_gen_dir/atom_natives.cc",
   ]
 
   script = "tools/js2c.py"
   args = [ rebase_path("//third_party/electron_node") ] +
          rebase_path(outputs, root_build_dir) +
-         [ rebase_path("$target_gen_dir/js2c", root_build_dir) ]
+         rebase_path(sources, root_build_dir)
 }
 
-asar("js2asar") {
+target_gen_electron_js = "$target_gen_dir/js/electron"
+target_gen_default_app_js = "$target_gen_dir/js/default_app"
+
+typescript_build("lib_js") {
+  deps = [
+    ":build_electron_definitions",
+  ]
+  type_root = rebase_path("$target_gen_dir/tsc/electron/typings")
+
   sources = filenames.js_sources
   if (enable_desktop_capturer) {
     sources += [
@@ -165,21 +265,69 @@ asar("js2asar") {
       "lib/browser/api/views/label-button.js",
       "lib/browser/api/views/layout-manager.js",
       "lib/browser/api/views/md-text-button.js",
+      "lib/browser/api/views/resize-area.js",
       "lib/browser/api/views/text-field.js",
     ]
   }
+
+  output_gen_dir = target_gen_electron_js
+  output_dir_name = "lib"
+  tsconfig = "tsconfig.electron.json"
+}
+
+asar("electron_asar") {
+  deps = [
+    ":lib_js",
+  ]
+
+  root = "$target_gen_electron_js/electron/lib"
+  sources = get_target_outputs(":lib_js")
   outputs = [
     "$root_out_dir/resources/electron.asar",
   ]
-  root = "lib"
 }
 
-asar("app2asar") {
-  sources = filenames.default_app_sources
+typescript_build("default_app_js") {
+  deps = [
+    ":build_electron_definitions",
+  ]
+  type_root = rebase_path("$target_gen_dir/tsc/electron/typings")
+
+  sources = filenames.default_app_ts_sources
+
+  output_gen_dir = target_gen_default_app_js
+  output_dir_name = "default_app"
+  tsconfig = "tsconfig.default_app.json"
+}
+
+copy("default_app_static") {
+  sources = filenames.default_app_static_sources
+  outputs = [
+    "$target_gen_default_app_js/{{source}}",
+  ]
+}
+
+copy("default_app_octicon_deps") {
+  sources = filenames.default_app_octicon_sources
+  outputs = [
+    "$target_gen_default_app_js/electron/default_app/octicon/{{source_file_part}}",
+  ]
+}
+
+asar("default_app_asar") {
+  deps = [
+    ":default_app_js",
+    ":default_app_octicon_deps",
+    ":default_app_static",
+  ]
+
+  root = "$target_gen_default_app_js/electron/default_app"
+  sources = get_target_outputs(":default_app_js") +
+            get_target_outputs(":default_app_static") +
+            get_target_outputs(":default_app_octicon_deps")
   outputs = [
     "$root_out_dir/resources/default_app.asar",
   ]
-  root = "default_app"
 }
 
 grit("resources") {
@@ -190,16 +338,27 @@ grit("resources") {
     "electron_resources.pak",
   ]
 
+  # Mojo manifest overlays are generated.
+  source_is_generated = true
   grit_flags = [
     "-E",
     "target_gen_dir=" + rebase_path(target_gen_dir, root_build_dir),
   ]
 
   deps = [
-    ":electron_content_manifest_overlays",
+    ":copy_shell_devtools_discovery_page",
   ]
 
   output_dir = "$target_gen_dir"
+}
+
+copy("copy_shell_devtools_discovery_page") {
+  sources = [
+    "//content/shell/resources/shell_devtools_discovery_page.html",
+  ]
+  outputs = [
+    "$target_gen_dir/shell_devtools_discovery_page.html",
+  ]
 }
 
 if (is_linux) {
@@ -226,6 +385,30 @@ if (is_linux) {
   }
 }
 
+source_set("manifests") {
+  sources = [
+    "//electron/atom/app/manifests.cc",
+    "//electron/atom/app/manifests.h",
+  ]
+
+  include_dirs = [ "//electron" ]
+
+  deps = [
+    "//electron/atom/common/api:mojo",
+    "//printing/buildflags",
+    "//services/proxy_resolver/public/cpp:manifest",
+    "//services/service_manager/public/cpp",
+  ]
+
+  if (enable_basic_printing) {
+    deps += [ "//components/services/pdf_compositor/public/cpp:manifest" ]
+  }
+
+  if (enable_print_preview) {
+    deps += [ "//chrome/services/printing/public/cpp:manifest" ]
+  }
+}
+
 static_library("electron_lib") {
   configs += [ "//v8:external_startup_data" ]
   configs += [ "//third_party/electron_node:node_internals" ]
@@ -234,25 +417,30 @@ static_library("electron_lib") {
 
   deps = [
     ":atom_js2c",
+    ":manifests",
+    ":resources",
+    "atom/common/api:mojo",
     "buildflags",
     "chromium_src:chrome",
     "native_mate",
-    "//base",
     "//base:base_static",
-    "//base:i18n",
+    "//base/allocator:buildflags",
     "//chrome/app/resources:platform_locale_settings",
     "//components/certificate_transparency",
     "//components/net_log",
     "//components/network_session_configurator/common",
     "//components/prefs",
     "//components/spellcheck/renderer",
+    "//components/viz/host",
     "//components/viz/service",
-    "//content/public/app:both",
     "//content/public/browser",
     "//content/public/child",
     "//content/public/common:service_names",
-    "//content/shell:copy_shell_resources",
+    "//content/public/renderer",
+    "//content/public/utility",
+    "//device/bluetooth",
     "//gin",
+    "//media/capture/mojom:video_capture",
     "//media/mojo/interfaces",
     "//net:extras",
     "//net:net_resources",
@@ -260,8 +448,13 @@ static_library("electron_lib") {
     "//ppapi/host",
     "//ppapi/proxy",
     "//ppapi/shared_impl",
+    "//printing/buildflags",
+    "//services/audio/public/mojom:constants",
+    "//services/device/public/cpp/geolocation",
     "//services/device/public/mojom",
     "//services/proxy_resolver:lib",
+    "//services/video_capture/public/mojom:constants",
+    "//services/viz/privileged/interfaces/compositing",
     "//skia",
     "//third_party/blink/public:blink",
     "//third_party/boringssl",
@@ -270,10 +463,20 @@ static_library("electron_lib") {
     "//third_party/libyuv",
     "//third_party/webrtc_overrides:init_webrtc",
     "//third_party/widevine/cdm:headers",
+    "//ui/base/idle",
     "//ui/events:dom_keycode_converter",
     "//ui/gl",
+    "//ui/native_theme",
+    "//ui/shell_dialogs",
     "//ui/views",
     "//v8",
+    "//v8:v8_libplatform",
+  ]
+
+  public_deps = [
+    "//base",
+    "//base:i18n",
+    "//content/public/app:both",
   ]
 
   include_dirs = [
@@ -286,8 +489,12 @@ static_library("electron_lib") {
     "//third_party/blink/renderer",
   ]
 
-  defines = []
+  defines = [ "V8_DEPRECATION_WARNINGS" ]
   libs = []
+
+  if (is_linux) {
+    defines += [ "GDK_DISABLE_DEPRECATION_WARNINGS" ]
+  }
 
   extra_source_filters = []
   if (!is_linux) {
@@ -317,8 +524,6 @@ static_library("electron_lib") {
       "*_views.cc",
       "*_views.h",
       "*\bviews/*",
-      "*/autofill_popup.cc",
-      "*/autofill_popup.h",
     ]
   }
 
@@ -326,8 +531,6 @@ static_library("electron_lib") {
       sources_assignment_filter + extra_source_filters)
   sources = filenames.lib_sources
   set_sources_assignment_filter(sources_assignment_filter)
-
-  sources += [ "$target_gen_dir/atom_natives.h" ]
 
   if (is_component_build) {
     defines += [ "NODE_SHARED_MODE" ]
@@ -344,6 +547,10 @@ static_library("electron_lib") {
     deps += [
       "//third_party/crashpad/crashpad/client",
       "//ui/accelerated_widget_mac",
+    ]
+    sources += [
+      "atom/browser/ui/views/autofill_popup_view.cc",
+      "atom/browser/ui/views/autofill_popup_view.h",
     ]
     include_dirs += [
       # NOTE(nornagon): other chromium files use the full path to include
@@ -380,12 +587,10 @@ static_library("electron_lib") {
       ":libnotify_loader",
       "//build/config/linux/gtk",
       "//chrome/browser/ui/libgtkui",
+      "//dbus",
       "//device/bluetooth",
       "//ui/events/devices/x11",
       "//ui/events/platform/x11",
-      "//ui/native_theme",
-      "//ui/views/controls/webview",
-      "//ui/wm",
     ]
     configs += [ ":gio_unix" ]
     defines += [
@@ -397,9 +602,20 @@ static_library("electron_lib") {
   }
   if (is_win) {
     libs += [ "dwmapi.lib" ]
+    deps += [
+      "//third_party/breakpad:breakpad_handler",
+      "//third_party/breakpad:breakpad_sender",
+      "//ui/native_theme:native_theme_browser",
+      "//ui/wm/public",
+    ]
+    public_deps += [ "//sandbox/win:sandbox" ]
   }
   if (is_linux || is_win) {
-    deps += [ "//third_party/breakpad:client" ]
+    deps += [
+      "//third_party/breakpad:client",
+      "//ui/views/controls/webview",
+      "//ui/wm",
+    ]
     include_dirs += [ "//third_party/breakpad" ]
   }
 
@@ -416,12 +632,13 @@ static_library("electron_lib") {
 
   if (enable_osr) {
     sources += [
-      "atom/browser/api/atom_api_web_contents_osr.cc",
-      "atom/browser/osr/osr_output_device.cc",
-      "atom/browser/osr/osr_output_device.h",
+      "atom/browser/osr/osr_host_display_client.cc",
+      "atom/browser/osr/osr_host_display_client.h",
+      "atom/browser/osr/osr_host_display_client_mac.mm",
       "atom/browser/osr/osr_render_widget_host_view.cc",
       "atom/browser/osr/osr_render_widget_host_view.h",
-      "atom/browser/osr/osr_render_widget_host_view_mac.mm",
+      "atom/browser/osr/osr_video_consumer.cc",
+      "atom/browser/osr/osr_video_consumer.h",
       "atom/browser/osr/osr_view_proxy.cc",
       "atom/browser/osr/osr_view_proxy.h",
       "atom/browser/osr/osr_web_contents_view.cc",
@@ -459,6 +676,8 @@ static_library("electron_lib") {
       "atom/browser/api/views/atom_api_layout_manager.h",
       "atom/browser/api/views/atom_api_md_text_button.cc",
       "atom/browser/api/views/atom_api_md_text_button.h",
+      "atom/browser/api/views/atom_api_resize_area.cc",
+      "atom/browser/api/views/atom_api_resize_area.h",
       "atom/browser/api/views/atom_api_text_field.cc",
       "atom/browser/api/views/atom_api_text_field.h",
     ]
@@ -574,7 +793,7 @@ if (is_mac) {
     }
     info_plist = "atom/common/resources/mac/Info.plist"
 
-    electron_version = read_file("VERSION", "trim string")
+    electron_version = read_file("ELECTRON_VERSION", "trim string")
     extra_substitutions = [
       "ATOM_BUNDLE_ID=$electron_mac_bundle_id.framework",
       "ELECTRON_VERSION=$electron_version",
@@ -584,7 +803,9 @@ if (is_mac) {
     sources = filenames.framework_sources
 
     libs = [
+      "AVFoundation.framework",
       "Carbon.framework",
+      "LocalAuthentication.framework",
       "QuartzCore.framework",
       "Quartz.framework",
       "Security.framework",
@@ -592,6 +813,11 @@ if (is_mac) {
       "ServiceManagement.framework",
       "StoreKit.framework",
     ]
+
+    if (enable_osr) {
+      libs += [ "IOSurface.framework" ]
+    }
+
     ldflags = [
       "-F",
       rebase_path("external_binaries", root_build_dir),
@@ -612,6 +838,10 @@ if (is_mac) {
     deps = [
       ":electron_framework+link",
     ]
+    if (!is_mas_build) {
+      deps += [ "//sandbox/mac:seatbelt" ]
+    }
+    defines = [ "HELPER_EXECUTABLE" ]
     sources = filenames.app_sources
     include_dirs = [ "." ]
     info_plist = "atom/renderer/resources/mac/Info.plist"
@@ -620,6 +850,12 @@ if (is_mac) {
       "-rpath",
       "@executable_path/../../..",
     ]
+    if (is_component_build) {
+      ldflags += [
+        "-rpath",
+        "@executable_path/../../../../../..",
+      ]
+    }
   }
 
   bundle_data("electron_app_framework_bundle_data") {
@@ -697,9 +933,9 @@ if (is_mac) {
 
   bundle_data("electron_app_resources") {
     public_deps = [
-      ":app2asar",
+      ":default_app_asar",
       ":electron_app_strings_bundle_data",
-      ":js2asar",
+      ":electron_asar",
     ]
     sources = [
       "$root_out_dir/resources/default_app.asar",
@@ -745,12 +981,13 @@ if (is_mac) {
     sources = filenames.app_sources
     include_dirs = [ "." ]
     deps = [
-      ":app2asar",
+      ":default_app_asar",
       ":electron_app_manifest",
+      ":electron_asar",
       ":electron_lib",
-      ":js2asar",
       ":packed_resources",
       "//content:sandbox_helper_win",
+      "//electron/buildflags",
       "//ui/strings",
     ]
 
@@ -779,17 +1016,7 @@ if (is_mac) {
         # TODO: we should be generating our .rc files more like how chrome does
         "atom/browser/resources/win/atom.ico",
         "atom/browser/resources/win/atom.rc",
-        "atom/browser/resources/win/resources.h",
-      ]
-
-      deps += [
-        "//third_party/breakpad:breakpad_handler",
-        "//third_party/breakpad:breakpad_sender",
-        "//ui/native_theme:native_theme_browser",
-        "//ui/shell_dialogs",
-        "//ui/views/controls/webview",
-        "//ui/wm",
-        "//ui/wm/public",
+        "atom/browser/resources/win/resource.h",
       ]
 
       libs = [
@@ -886,7 +1113,7 @@ group("licenses") {
 
 copy("electron_version") {
   sources = [
-    "VERSION",
+    "ELECTRON_VERSION",
   ]
   outputs = [
     "$root_build_dir/version",
@@ -899,6 +1126,9 @@ dist_zip("electron_dist_zip") {
     ":licenses",
     ":electron_version",
   ]
+  if (is_linux) {
+    data_deps += [ "//sandbox/linux:chrome_sandbox" ]
+  }
   outputs = [
     "$root_build_dir/dist.zip",
   ]
@@ -938,27 +1168,4 @@ group("electron") {
   public_deps = [
     ":electron_app",
   ]
-}
-
-group("electron_content_manifest_overlays") {
-  deps = [
-    ":electron_content_browser_manifest_overlay",
-    ":electron_content_packaged_services_manifest_overlay",
-  ]
-}
-
-service_manifest("electron_content_packaged_services_manifest_overlay") {
-  source = "//electron/manifests/electron_content_packaged_services_manifest_overlay.json"
-  packaged_services = [ "//services/proxy_resolver:proxy_resolver_manifest" ]
-
-  if (enable_basic_printing) {
-    packaged_services += [
-      "//chrome/services/printing:manifest",
-      "//components/services/pdf_compositor:pdf_compositor_manifest",
-    ]
-  }
-}
-
-service_manifest("electron_content_browser_manifest_overlay") {
-  source = "//electron/manifests/electron_content_browser_manifest_overlay.json"
 }

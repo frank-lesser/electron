@@ -12,6 +12,7 @@ const { emittedOnce, waitForEvent } = require('./events-helpers')
 const { expect } = chai
 chai.use(dirtyChai)
 
+const features = process.electronBinding('features')
 const isCI = remote.getGlobal('isCi')
 const nativeModulesEnabled = remote.getGlobal('nativeModulesEnabled')
 
@@ -65,40 +66,75 @@ describe('<webview> tag', function () {
   })
 
   it('works without script tag in page', async () => {
-    const w = await openTheWindow({ show: false })
-    w.loadFile(path.join(fixtures, 'pages', 'webview-no-script.html'))
-    await emittedOnce(ipcMain, 'pong')
-  })
-
-  it('is disabled when nodeIntegration is disabled', async () => {
     const w = await openTheWindow({
       show: false,
       webPreferences: {
-        nodeIntegration: false,
-        preload: path.join(fixtures, 'module', 'preload-webview.js')
+        webviewTag: true,
+        nodeIntegration: true
+      }
+    })
+    const pong = emittedOnce(ipcMain, 'pong')
+    w.loadFile(path.join(fixtures, 'pages', 'webview-no-script.html'))
+    await pong
+  })
+
+  it('works with sandbox', async () => {
+    const w = await openTheWindow({
+      show: false,
+      webPreferences: {
+        webviewTag: true,
+        nodeIntegration: true,
+        sandbox: true
+      }
+    })
+    const pong = emittedOnce(ipcMain, 'pong')
+    w.loadFile(path.join(fixtures, 'pages', 'webview-isolated.html'))
+    await pong
+  })
+
+  it('works with contextIsolation', async () => {
+    const w = await openTheWindow({
+      show: false,
+      webPreferences: {
+        webviewTag: true,
+        nodeIntegration: true,
+        contextIsolation: true
+      }
+    })
+    const pong = emittedOnce(ipcMain, 'pong')
+    w.loadFile(path.join(fixtures, 'pages', 'webview-isolated.html'))
+    await pong
+  })
+
+  it('works with contextIsolation + sandbox', async () => {
+    const w = await openTheWindow({
+      show: false,
+      webPreferences: {
+        webviewTag: true,
+        nodeIntegration: true,
+        contextIsolation: true,
+        sandbox: true
+      }
+    })
+    const pong = emittedOnce(ipcMain, 'pong')
+    w.loadFile(path.join(fixtures, 'pages', 'webview-isolated.html'))
+    await pong
+  })
+
+  it('is disabled by default', async () => {
+    const w = await openTheWindow({
+      show: false,
+      webPreferences: {
+        preload: path.join(fixtures, 'module', 'preload-webview.js'),
+        nodeIntegration: true
       }
     })
 
+    const webview = emittedOnce(ipcMain, 'webview')
     w.loadFile(path.join(fixtures, 'pages', 'webview-no-script.html'))
-    const [, type] = await emittedOnce(ipcMain, 'webview')
+    const [, type] = await webview
 
     expect(type).to.equal('undefined', 'WebView still exists')
-  })
-
-  it('is enabled when the webviewTag option is enabled and the nodeIntegration option is disabled', async () => {
-    const w = await openTheWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        preload: path.join(fixtures, 'module', 'preload-webview.js'),
-        webviewTag: true
-      }
-    })
-
-    w.loadFile(path.join(fixtures, 'pages', 'webview-no-script.html'))
-    const [, type] = await emittedOnce(ipcMain, 'webview')
-
-    expect(type).to.not.equal('undefined', 'WebView is not created')
   })
 
   describe('src attribute', () => {
@@ -621,7 +657,7 @@ describe('<webview> tag', function () {
   })
 
   describe('ipc-message event', () => {
-    it('emits when guest sends a ipc message to browser', async () => {
+    it('emits when guest sends an ipc message to browser', async () => {
       loadWebView(webview, {
         nodeintegration: 'on',
         src: `file://${fixtures}/pages/ipc-message.html`
@@ -753,11 +789,7 @@ describe('<webview> tag', function () {
       const devtools = webview2.getWebContents()
       assert.ok(devtools.getURL().startsWith('chrome-devtools://devtools'))
 
-      const name = await new Promise((resolve) => {
-        devtools.executeJavaScript('InspectorFrontendHost.constructor.name', (name) => {
-          resolve(name)
-        })
-      })
+      const name = await devtools.executeJavaScript('InspectorFrontendHost.constructor.name')
       document.body.removeChild(webview2)
 
       expect(name).to.be.equal('InspectorFrontendHostImpl')
@@ -965,6 +997,19 @@ describe('<webview> tag', function () {
       const jsScript = "'4'+2"
       const expectedResult = '42'
 
+      const result = await webview.executeJavaScript(jsScript)
+      assert.strictEqual(result, expectedResult)
+    })
+
+    // TODO(miniak): remove when promisification is complete
+    it('can return the result of the executed script (callback)', async () => {
+      await loadWebView(webview, {
+        src: 'about:blank'
+      })
+
+      const jsScript = "'4'+2"
+      const expectedResult = '42'
+
       const result = await new Promise((resolve) => {
         webview.executeJavaScript(jsScript, false, (result) => {
           resolve(result)
@@ -1079,7 +1124,7 @@ describe('<webview> tag', function () {
       assert.ok(webview.partition)
 
       const listener = function (webContents, permission, callback) {
-        if (webContents.id === webview.getWebContents().id) {
+        if (webContents.id === webview.getWebContentsId()) {
           // requestMIDIAccess with sysex requests both midi and midiSysex so
           // grant the first midi one and then reject the midiSysex one
           if (requestedPermission === 'midiSysex' && permission === 'midi') {
@@ -1165,12 +1210,21 @@ describe('<webview> tag', function () {
       webview.partition = 'permissionTest'
       webview.setAttribute('nodeintegration', 'on')
       session.fromPartition(webview.partition).setPermissionRequestHandler((webContents, permission, callback) => {
-        if (webContents.id === webview.getWebContents().id) {
+        if (webContents.id === webview.getWebContentsId()) {
           assert.strictEqual(permission, 'notifications')
           setTimeout(() => { callback(true) }, 10)
         }
       })
       document.body.appendChild(webview)
+    })
+  })
+
+  describe('<webview>.getWebContentsId', () => {
+    it('can return the WebContents ID', async () => {
+      const src = 'about:blank'
+      await loadWebView(webview, { src })
+
+      expect(webview.getWebContentsId()).to.be.equal(webview.getWebContents().id)
     })
   })
 
@@ -1182,6 +1236,56 @@ describe('<webview> tag', function () {
       const webviewContents = webview.getWebContents()
       assert(webviewContents)
       expect(webviewContents.getURL()).to.equal(src)
+    })
+  })
+
+  describe('<webview>.getWebContents filtering', () => {
+    it('can return custom value', async () => {
+      const src = 'about:blank'
+      await loadWebView(webview, { src })
+
+      ipcRenderer.send('handle-next-remote-get-guest-web-contents', 'Hello World!')
+      expect(webview.getWebContents()).to.be.equal('Hello World!')
+    })
+
+    it('throws when no returnValue set', async () => {
+      const src = 'about:blank'
+      await loadWebView(webview, { src })
+
+      ipcRenderer.send('handle-next-remote-get-guest-web-contents')
+      expect(() => webview.getWebContents()).to.throw('Blocked remote.getGuestForWebContents()')
+    })
+  })
+
+  describe('<webview>.printToPDF()', () => {
+    before(function () {
+      if (!features.isPrintingEnabled()) {
+        this.skip()
+      }
+    })
+
+    it('can print to PDF', async () => {
+      const src = 'data:text/html,%3Ch1%3EHello%2C%20World!%3C%2Fh1%3E'
+      await loadWebView(webview, { src })
+
+      const data = await webview.printToPDF({})
+      assert.strictEqual(data instanceof Buffer, true)
+      assert.notStrictEqual(data.length, 0)
+    })
+
+    // TODO(miniak): remove when promisification is complete
+    it('can print to PDF (callback)', (done) => {
+      webview.addEventListener('did-finish-load', () => {
+        webview.printToPDF({}, function (error, data) {
+          assert.strictEqual(error, null)
+          assert.strictEqual(data instanceof Buffer, true)
+          assert.notStrictEqual(data.length, 0)
+          done()
+        })
+      })
+
+      webview.src = 'data:text/html,%3Ch1%3EHello%2C%20World!%3C%2Fh1%3E'
+      document.body.appendChild(webview)
     })
   })
 
@@ -1277,17 +1381,31 @@ describe('<webview> tag', function () {
 
   describe('did-attach-webview event', () => {
     it('is emitted when a webview has been attached', async () => {
-      const w = await openTheWindow({ show: false })
+      const w = await openTheWindow({
+        show: false,
+        webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true
+        }
+      })
+      const didAttachWebview = emittedOnce(w.webContents, 'did-attach-webview')
+      const webviewDomReady = emittedOnce(ipcMain, 'webview-dom-ready')
       w.loadFile(path.join(fixtures, 'pages', 'webview-did-attach-event.html'))
 
-      const [, webContents] = await emittedOnce(w.webContents, 'did-attach-webview')
-      const [, id] = await emittedOnce(ipcMain, 'webview-dom-ready')
+      const [, webContents] = await didAttachWebview
+      const [, id] = await webviewDomReady
       expect(webContents.id).to.equal(id)
     })
   })
 
   it('loads devtools extensions registered on the parent window', async () => {
-    const w = await openTheWindow({ show: false })
+    const w = await openTheWindow({
+      show: false,
+      webPreferences: {
+        webviewTag: true,
+        nodeIntegration: true
+      }
+    })
     BrowserWindow.removeDevToolsExtension('foo')
 
     const extensionPath = path.join(__dirname, 'fixtures', 'devtools-extensions', 'foo')
@@ -1316,47 +1434,56 @@ describe('<webview> tag', function () {
       if (div != null) div.remove()
     })
 
-    it('emits resize events', async () => {
-      const firstResizeSignal = waitForEvent(webview, 'resize')
-      const domReadySignal = waitForEvent(webview, 'dom-ready')
+    const generateSpecs = (description, sandbox) => {
+      describe(description, () => {
+        it('emits resize events', async () => {
+          const firstResizeSignal = waitForEvent(webview, 'resize')
+          const domReadySignal = waitForEvent(webview, 'dom-ready')
 
-      webview.src = `file://${fixtures}/pages/a.html`
-      div.appendChild(webview)
-      document.body.appendChild(div)
+          webview.src = `file://${fixtures}/pages/a.html`
+          webview.webpreferences = `sandbox=${sandbox ? 'yes' : 'no'}`
+          div.appendChild(webview)
+          document.body.appendChild(div)
 
-      const firstResizeEvent = await firstResizeSignal
-      expect(firstResizeEvent.target).to.equal(webview)
-      expect(firstResizeEvent.newWidth).to.equal(100)
-      expect(firstResizeEvent.newHeight).to.equal(10)
+          const firstResizeEvent = await firstResizeSignal
+          expect(firstResizeEvent.target).to.equal(webview)
+          expect(firstResizeEvent.newWidth).to.equal(100)
+          expect(firstResizeEvent.newHeight).to.equal(10)
 
-      await domReadySignal
+          await domReadySignal
 
-      const secondResizeSignal = waitForEvent(webview, 'resize')
+          const secondResizeSignal = waitForEvent(webview, 'resize')
 
-      const newWidth = 1234
-      const newHeight = 789
-      div.style.width = `${newWidth}px`
-      div.style.height = `${newHeight}px`
+          const newWidth = 1234
+          const newHeight = 789
+          div.style.width = `${newWidth}px`
+          div.style.height = `${newHeight}px`
 
-      const secondResizeEvent = await secondResizeSignal
-      expect(secondResizeEvent.target).to.equal(webview)
-      expect(secondResizeEvent.newWidth).to.equal(newWidth)
-      expect(secondResizeEvent.newHeight).to.equal(newHeight)
-    })
+          const secondResizeEvent = await secondResizeSignal
+          expect(secondResizeEvent.target).to.equal(webview)
+          expect(secondResizeEvent.newWidth).to.equal(newWidth)
+          expect(secondResizeEvent.newHeight).to.equal(newHeight)
+        })
 
-    it('emits focus event', async () => {
-      const domReadySignal = waitForEvent(webview, 'dom-ready')
-      webview.src = `file://${fixtures}/pages/a.html`
-      document.body.appendChild(webview)
+        it('emits focus event', async () => {
+          const domReadySignal = waitForEvent(webview, 'dom-ready')
+          webview.src = `file://${fixtures}/pages/a.html`
+          webview.webpreferences = `sandbox=${sandbox ? 'yes' : 'no'}`
+          document.body.appendChild(webview)
 
-      await domReadySignal
+          await domReadySignal
 
-      // If this test fails, check if webview.focus() still works.
-      const focusSignal = waitForEvent(webview, 'focus')
-      webview.focus()
+          // If this test fails, check if webview.focus() still works.
+          const focusSignal = waitForEvent(webview, 'focus')
+          webview.focus()
 
-      await focusSignal
-    })
+          await focusSignal
+        })
+      })
+    }
+
+    generateSpecs('without sandbox', false)
+    generateSpecs('with sandbox', true)
   })
 
   describe('zoom behavior', () => {
@@ -1379,12 +1506,15 @@ describe('<webview> tag', function () {
       const w = await openTheWindow({
         show: false,
         webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
           zoomFactor: 1.2
         }
       })
+      const zoomEventPromise = emittedOnce(ipcMain, 'webview-parent-zoom-level')
       w.loadFile(path.join(fixtures, 'pages', 'webview-zoom-factor.html'))
 
-      const [, zoomFactor, zoomLevel] = await emittedOnce(ipcMain, 'webview-parent-zoom-level')
+      const [, zoomFactor, zoomLevel] = await zoomEventPromise
       expect(zoomFactor).to.equal(1.2)
       expect(zoomLevel).to.equal(1)
     })
@@ -1393,6 +1523,8 @@ describe('<webview> tag', function () {
       return openTheWindow({
         show: false,
         webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
           zoomFactor: 1.2
         }
       }).then((w) => {
@@ -1422,6 +1554,8 @@ describe('<webview> tag', function () {
       return openTheWindow({
         show: false,
         webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
           zoomFactor: 1.2
         }
       }).then((w) => {
@@ -1446,6 +1580,8 @@ describe('<webview> tag', function () {
       const w = await openTheWindow({
         show: false,
         webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
           zoomFactor: 1.2
         }
       })

@@ -6,11 +6,10 @@
 
 #include "atom/browser/browser.h"
 #include "atom/common/native_mate_converters/callback.h"
+#include "atom/common/node_includes.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "native_mate/dictionary.h"
-
-#include "atom/common/node_includes.h"
 
 namespace mate {
 template <>
@@ -84,19 +83,19 @@ void PowerMonitor::OnResume() {
   Emit("resume");
 }
 
-void PowerMonitor::QuerySystemIdleState(v8::Isolate* isolate,
-                                        int idle_threshold,
-                                        const ui::IdleCallback& callback) {
+ui::IdleState PowerMonitor::GetSystemIdleState(v8::Isolate* isolate,
+                                               int idle_threshold) {
   if (idle_threshold > 0) {
-    ui::CalculateIdleState(idle_threshold, callback);
+    return ui::CalculateIdleState(idle_threshold);
   } else {
     isolate->ThrowException(v8::Exception::TypeError(mate::StringToV8(
         isolate, "Invalid idle threshold, must be greater than 0")));
+    return ui::IDLE_STATE_UNKNOWN;
   }
 }
 
-void PowerMonitor::QuerySystemIdleTime(const ui::IdleTimeCallback& callback) {
-  ui::CalculateIdleTime(callback);
+int PowerMonitor::GetSystemIdleTime() {
+  return ui::CalculateIdleTime();
 }
 
 // static
@@ -122,8 +121,8 @@ void PowerMonitor::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("blockShutdown", &PowerMonitor::BlockShutdown)
       .SetMethod("unblockShutdown", &PowerMonitor::UnblockShutdown)
 #endif
-      .SetMethod("querySystemIdleState", &PowerMonitor::QuerySystemIdleState)
-      .SetMethod("querySystemIdleTime", &PowerMonitor::QuerySystemIdleTime);
+      .SetMethod("getSystemIdleState", &PowerMonitor::GetSystemIdleState)
+      .SetMethod("getSystemIdleTime", &PowerMonitor::GetSystemIdleTime);
 }
 
 }  // namespace api
@@ -141,10 +140,11 @@ void Initialize(v8::Local<v8::Object> exports,
   v8::Isolate* isolate = context->GetIsolate();
   mate::Dictionary dict(isolate, exports);
   dict.Set("powerMonitor", PowerMonitor::Create(isolate));
-  dict.Set("PowerMonitor",
-           PowerMonitor::GetConstructor(isolate)->GetFunction());
+  dict.Set("PowerMonitor", PowerMonitor::GetConstructor(isolate)
+                               ->GetFunction(context)
+                               .ToLocalChecked());
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_power_monitor, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_power_monitor, Initialize)

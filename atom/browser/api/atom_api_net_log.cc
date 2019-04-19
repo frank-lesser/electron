@@ -7,8 +7,10 @@
 #include <utility>
 
 #include "atom/browser/atom_browser_context.h"
+#include "atom/browser/net/system_network_context_manager.h"
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "components/net_log/chrome_net_log.h"
@@ -16,8 +18,6 @@
 #include "native_mate/dictionary.h"
 #include "native_mate/handle.h"
 #include "net/url_request/url_request_context_getter.h"
-
-#include "atom/common/node_includes.h"
 
 namespace atom {
 
@@ -27,7 +27,8 @@ NetLog::NetLog(v8::Isolate* isolate, AtomBrowserContext* browser_context)
     : browser_context_(browser_context) {
   Init(isolate);
 
-  net_log_writer_ = g_browser_process->net_log()->net_export_file_writer();
+  net_log_writer_ = g_browser_process->system_network_context_manager()
+                        ->GetNetExportFileWriter();
   net_log_writer_->AddObserver(this);
 }
 
@@ -85,19 +86,18 @@ std::string NetLog::GetCurrentlyLoggingPath() const {
   return std::string();
 }
 
-void NetLog::StopLogging(mate::Arguments* args) {
-  net_log::NetExportFileWriter::FilePathCallback callback;
-  if (!args->GetNext(&callback)) {
-    args->ThrowError("Invalid callback function");
-    return;
-  }
+v8::Local<v8::Promise> NetLog::StopLogging(mate::Arguments* args) {
+  util::Promise promise(isolate());
+  v8::Local<v8::Promise> handle = promise.GetHandle();
 
   if (IsCurrentlyLogging()) {
-    stop_callback_queue_.emplace_back(callback);
+    stop_callback_queue_.emplace_back(std::move(promise));
     net_log_writer_->StopNetLog(nullptr);
   } else {
-    callback.Run(base::FilePath());
+    promise.Resolve(base::FilePath());
   }
+
+  return handle;
 }
 
 void NetLog::OnNewState(const base::DictionaryValue& state) {
@@ -107,9 +107,12 @@ void NetLog::OnNewState(const base::DictionaryValue& state) {
     return;
 
   if (GetLoggingState() == "NOT_LOGGING") {
-    for (auto& callback : stop_callback_queue_) {
-      if (!callback.is_null())
-        net_log_writer_->GetFilePathToCompletedLog(callback);
+    for (auto& promise : stop_callback_queue_) {
+      // TODO(zcbenz): Remove the use of CopyablePromise when the
+      // GetFilePathToCompletedLog API accepts OnceCallback.
+      net_log_writer_->GetFilePathToCompletedLog(base::Bind(
+          util::CopyablePromise::ResolveCopyablePromise<const base::FilePath&>,
+          util::CopyablePromise(promise)));
     }
     stop_callback_queue_.clear();
   }

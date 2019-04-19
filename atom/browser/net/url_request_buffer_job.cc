@@ -13,6 +13,8 @@
 #include "atom/common/native_mate_converters/v8_value_converter.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
@@ -38,7 +40,7 @@ void BeforeStartInUI(base::WeakPtr<URLRequestBufferJob> job,
   if (args->GetNext(&value)) {
     V8ValueConverter converter;
     v8::Local<v8::Context> context = args->isolate()->GetCurrentContext();
-    request_options.reset(converter.FromV8Value(value, context));
+    request_options = converter.FromV8Value(value, context);
   }
 
   if (request_options) {
@@ -47,10 +49,9 @@ void BeforeStartInUI(base::WeakPtr<URLRequestBufferJob> job,
     error = net::ERR_NOT_IMPLEMENTED;
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&URLRequestBufferJob::StartAsync, job,
-                     std::move(request_options), error));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::IO},
+                           base::BindOnce(&URLRequestBufferJob::StartAsync, job,
+                                          std::move(request_options), error));
 }
 
 }  // namespace
@@ -66,8 +67,8 @@ URLRequestBufferJob::~URLRequestBufferJob() = default;
 void URLRequestBufferJob::Start() {
   auto request_details = std::make_unique<base::DictionaryValue>();
   FillRequestDetails(request_details.get(), request());
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&JsAsker::AskForOptions, base::Unretained(isolate()),
                      handler(), std::move(request_details),
                      base::Bind(&BeforeStartInUI, weak_factory_.GetWeakPtr())));
@@ -120,7 +121,7 @@ void URLRequestBufferJob::Kill() {
 }
 
 void URLRequestBufferJob::GetResponseInfo(net::HttpResponseInfo* info) {
-  std::string status("HTTP/1.1 200 OK");
+  std::string status("HTTP/1.1 ");
   status.append(base::IntToString(status_code_));
   status.append(" ");
   status.append(net::GetHttpReasonPhrase(status_code_));
@@ -143,7 +144,7 @@ int URLRequestBufferJob::GetRefCountedData(
     std::string* mime_type,
     std::string* charset,
     scoped_refptr<base::RefCountedMemory>* data,
-    const net::CompletionCallback& callback) const {
+    net::CompletionOnceCallback callback) const {
   *mime_type = mime_type_;
   *charset = charset_;
   *data = data_;

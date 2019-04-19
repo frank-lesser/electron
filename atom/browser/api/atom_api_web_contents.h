@@ -5,6 +5,7 @@
 #ifndef ATOM_BROWSER_API_ATOM_API_WEB_CONTENTS_H_
 #define ATOM_BROWSER_API_ATOM_API_WEB_CONTENTS_H_
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,14 +16,18 @@
 #include "atom/browser/common_web_contents_delegate.h"
 #include "atom/browser/ui/autofill_popup.h"
 #include "base/observer_list.h"
+#include "base/observer_list_types.h"
 #include "content/common/cursors/webcursor.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_binding_set.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/favicon_url.h"
+#include "electron/atom/common/api/api.mojom.h"
 #include "electron/buildflags/buildflags.h"
 #include "native_mate/handle.h"
 #include "printing/buildflags/buildflags.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/gfx/image/image.h"
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -53,23 +58,27 @@ class WebViewGuestDelegate;
 class FrameSubscriber;
 
 #if BUILDFLAG(ENABLE_OSR)
-class OffScreenWebContentsView;
+class OffScreenRenderWidgetHostView;
 #endif
 
 namespace api {
 
 // Certain events are only in WebContentsDelegate, provide our own Observer to
 // dispatch those events.
-class ExtendedWebContentsObserver {
+class ExtendedWebContentsObserver : public base::CheckedObserver {
  public:
   virtual void OnCloseContents() {}
   virtual void OnRendererResponsive() {}
+
+ protected:
+  ~ExtendedWebContentsObserver() override {}
 };
 
 // Wrapper around the content::WebContents.
 class WebContents : public mate::TrackableObject<WebContents>,
                     public CommonWebContentsDelegate,
-                    public content::WebContentsObserver {
+                    public content::WebContentsObserver,
+                    public mojom::ElectronBrowser {
  public:
   enum Type {
     BACKGROUND_PAGE,  // A DevTools extension background page.
@@ -145,9 +154,8 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void SetUserAgent(const std::string& user_agent, mate::Arguments* args);
   std::string GetUserAgent();
   void InsertCSS(const std::string& css);
-  bool SavePage(const base::FilePath& full_file_path,
-                const content::SavePageType& save_type,
-                const SavePageHandler::SavePageCallback& callback);
+  v8::Local<v8::Promise> SavePage(const base::FilePath& full_file_path,
+                                  const content::SavePageType& save_type);
   void OpenDevTools(mate::Arguments* args);
   void CloseDevTools();
   bool IsDevToolsOpened();
@@ -156,9 +164,8 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void EnableDeviceEmulation(const blink::WebDeviceEmulationParams& params);
   void DisableDeviceEmulation();
   void InspectElement(int x, int y);
+  void InspectSharedWorker();
   void InspectServiceWorker();
-  void HasServiceWorker(const base::Callback<void(bool)>&);
-  void UnregisterServiceWorker(const base::Callback<void(bool)>&);
   void SetIgnoreMenuShortcuts(bool ignore);
   void SetAudioMuted(bool muted);
   bool IsAudioMuted();
@@ -171,9 +178,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void Print(mate::Arguments* args);
   std::vector<printing::PrinterBasicInfo> GetPrinterList();
   // Print current page as PDF.
-  void PrintToPDF(
-      const base::DictionaryValue& settings,
-      const PrintPreviewMessageHandler::PrintToPDFCallback& callback);
+  v8::Local<v8::Promise> PrintToPDF(const base::DictionaryValue& settings);
 #endif
 
   // DevTools workspace api.
@@ -214,6 +219,12 @@ class WebContents : public mate::TrackableObject<WebContents>,
                                 const base::ListValue& args,
                                 int32_t sender_id = 0);
 
+  bool SendIPCMessageToFrame(bool internal,
+                             bool send_to_all,
+                             int32_t frame_id,
+                             const std::string& channel,
+                             const base::ListValue& args);
+
   // Send WebInputEvent to the page.
   void SendInputEvent(v8::Isolate* isolate, v8::Local<v8::Value> input_event);
 
@@ -226,12 +237,13 @@ class WebContents : public mate::TrackableObject<WebContents>,
 
   // Captures the page with |rect|, |callback| would be called when capturing is
   // done.
-  void CapturePage(mate::Arguments* args);
+  v8::Local<v8::Promise> CapturePage(mate::Arguments* args);
 
   // Methods for creating <webview>.
   bool IsGuest() const;
   void AttachToIframe(content::WebContents* embedder_web_contents,
                       int embedder_frame_id);
+  void DetachFromOuterFrame();
 
   // Methods for offscreen rendering
   bool IsOffScreen() const;
@@ -282,8 +294,8 @@ class WebContents : public mate::TrackableObject<WebContents>,
   // the specified URL.
   void GrantOriginAccess(const GURL& url);
 
-  bool TakeHeapSnapshot(const base::FilePath& file_path,
-                        const std::string& channel);
+  void TakeHeapSnapshot(const base::FilePath& file_path,
+                        base::Callback<void(bool)>);
 
   // Properties.
   int32_t ID() const;
@@ -352,7 +364,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void CloseContents(content::WebContents* source) override;
   void ActivateContents(content::WebContents* contents) override;
   void UpdateTargetURL(content::WebContents* source, const GURL& url) override;
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
@@ -370,7 +382,8 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void RendererResponsive(
       content::WebContents* source,
       content::RenderWidgetHost* render_widget_host) override;
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
+  bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                         const content::ContextMenuParams& params) override;
   bool OnGoToEntryOffset(int offset) override;
   void FindReply(content::WebContents* web_contents,
                  int request_id,
@@ -380,7 +393,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
                  bool final_update) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type) override;
+                                  blink::MediaStreamType type) override;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
@@ -396,10 +409,14 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void OnAudioStateChanged(bool audible) override;
 
   // content::WebContentsObserver:
-  void BeforeUnloadFired(const base::TimeTicks& proceed_time) override;
+  void BeforeUnloadFired(bool proceed,
+                         const base::TimeTicks& proceed_time) override;
   void RenderViewCreated(content::RenderViewHost*) override;
+  void RenderViewHostChanged(content::RenderViewHost* old_host,
+                             content::RenderViewHost* new_host) override;
   void RenderViewDeleted(content::RenderViewHost*) override;
   void RenderProcessGone(base::TerminationStatus status) override;
+  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
   void DocumentLoadedInFrame(
       content::RenderFrameHost* render_frame_host) override;
   void DidFinishLoad(content::RenderFrameHost* render_frame_host,
@@ -434,6 +451,10 @@ class WebContents : public mate::TrackableObject<WebContents>,
       const MediaPlayerId& id,
       content::WebContentsObserver::MediaStoppedReason reason) override;
   void DidChangeThemeColor(SkColor theme_color) override;
+  void OnInterfaceRequestFromFrame(
+      content::RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* interface_pipe) override;
 
   // InspectableWebContentsDelegate:
   void DevToolsReloadPage() override;
@@ -454,35 +475,36 @@ class WebContents : public mate::TrackableObject<WebContents>,
   struct FrameDispatchHelper;
   AtomBrowserContext* GetBrowserContext() const;
 
+  // Binds the given request for the ElectronBrowser API. When the
+  // RenderFrameHost is destroyed, all related bindings will be removed.
+  void BindElectronBrowser(mojom::ElectronBrowserRequest request,
+                           content::RenderFrameHost* render_frame_host);
+  void OnElectronBrowserConnectionError();
+
   uint32_t GetNextRequestId() { return ++request_id_; }
 
 #if BUILDFLAG(ENABLE_OSR)
-  OffScreenWebContentsView* GetOffScreenWebContentsView() const;
-  OffScreenRenderWidgetHostView* GetOffScreenRenderWidgetHostView()
-      const override;
+  OffScreenWebContentsView* GetOffScreenWebContentsView() const override;
+  OffScreenRenderWidgetHostView* GetOffScreenRenderWidgetHostView() const;
 #endif
+
+  // mojom::ElectronBrowser
+  void Message(bool internal,
+               const std::string& channel,
+               base::Value arguments) override;
+  void MessageSync(bool internal,
+                   const std::string& channel,
+                   base::Value arguments,
+                   MessageSyncCallback callback) override;
+  void MessageTo(bool internal,
+                 bool send_to_all,
+                 int32_t web_contents_id,
+                 const std::string& channel,
+                 base::Value arguments) override;
+  void MessageHost(const std::string& channel, base::Value arguments) override;
 
   // Called when we receive a CursorChange message from chromium.
   void OnCursorChange(const content::WebCursor& cursor);
-
-  // Called when received a message from renderer.
-  void OnRendererMessage(content::RenderFrameHost* frame_host,
-                         const std::string& channel,
-                         const base::ListValue& args);
-
-  // Called when received a synchronous message from renderer.
-  void OnRendererMessageSync(content::RenderFrameHost* frame_host,
-                             const std::string& channel,
-                             const base::ListValue& args,
-                             IPC::Message* message);
-
-  // Called when received a message from renderer to be forwarded.
-  void OnRendererMessageTo(content::RenderFrameHost* frame_host,
-                           bool internal,
-                           bool send_to_all,
-                           int32_t web_contents_id,
-                           const std::string& channel,
-                           const base::ListValue& args);
 
   // Called when received a synchronous message from renderer to
   // set temporary zoom level.
@@ -526,6 +548,15 @@ class WebContents : public mate::TrackableObject<WebContents>,
 
   // Observers of this WebContents.
   base::ObserverList<ExtendedWebContentsObserver> observers_;
+
+  // The ID of the process of the currently committed RenderViewHost.
+  // -1 means no speculative RVH has been committed yet.
+  int currently_committed_process_id_ = -1;
+
+  service_manager::BinderRegistryWithArgs<content::RenderFrameHost*> registry_;
+  mojo::BindingSet<mojom::ElectronBrowser, content::RenderFrameHost*> bindings_;
+  std::map<content::RenderFrameHost*, std::vector<mojo::BindingId>>
+      frame_to_bindings_map_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContents);
 };

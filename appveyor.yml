@@ -56,6 +56,10 @@ build_script:
   - cd src
   - ps: $env:BUILD_CONFIG_PATH="//electron/build/args/%GN_CONFIG%.gn"
   - gn gen out/Default "--args=import(\"%BUILD_CONFIG_PATH%\") %GN_EXTRA_ARGS%"
+  - gn check out/Default //electron:electron_lib
+  - gn check out/Default //electron:electron_app
+  - gn check out/Default //electron:manifests
+  - gn check out/Default //electron/atom/common/api:mojo
   - ninja -C out/Default electron:electron_app
   - gn gen out/ffmpeg "--args=import(\"//electron/build/args/ffmpeg.gn\") %GN_EXTRA_ARGS%"
   - ninja -C out/ffmpeg electron:electron_ffmpeg_zip
@@ -77,12 +81,12 @@ build_script:
         appveyor PushArtifact out/Default/symbols.zip
       }
 test_script:
+  # Workaround for https://github.com/appveyor/ci/issues/2420
+  - set "PATH=%PATH%;C:\Program Files\Git\mingw64\libexec\git-core"
   - ps: >-
       if ((-Not (Test-Path Env:\ELECTRON_RELEASE)) -And ($env:GN_CONFIG -in "testing", "release")) {
         $env:RUN_TESTS="true"
       }
-  - if "%RUN_TESTS%"=="true" ( echo Verifying non proprietary ffmpeg & python electron\script\verify-ffmpeg.py --build-dir out\Default --source-root %cd% --ffmpeg-path out\ffmpeg )
-  - if "%RUN_TESTS%"=="true" ( echo Verifying mksnapshot & python electron\script\verify-mksnapshot.py --build-dir out\Default --source-root %cd% )
   - ps: >-
       if ($env:RUN_TESTS -eq 'true') {
         New-Item .\out\Default\gen\node_headers\Release -Type directory
@@ -91,8 +95,12 @@ test_script:
         echo "Skipping tests for $env:GN_CONFIG build"
       }
   - cd electron
-  - if "%RUN_TESTS%"=="true" ( echo Running test suite & npm run test -- --ci )
+  - if "%RUN_TESTS%"=="true" ( echo Running test suite & npm run test -- --ci --enable-logging)
   - cd ..
+  - if "%RUN_TESTS%"=="true" ( echo Verifying non proprietary ffmpeg & python electron\script\verify-ffmpeg.py --build-dir out\Default --source-root %cd% --ffmpeg-path out\ffmpeg )
+  - echo "About to verify mksnapshot"
+  - if "%RUN_TESTS%"=="true" ( echo Verifying mksnapshot & python electron\script\verify-mksnapshot.py --build-dir out\Default --source-root %cd% )
+  - echo "Done verifying mksnapshot"
 deploy_script:
   - cd electron
   - ps: >-

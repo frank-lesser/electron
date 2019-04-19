@@ -27,7 +27,7 @@ bool XDGUtilV(const std::vector<std::string>& argv, const bool wait_for_exit) {
   // to a command that needs a terminal.  Set the environment variable telling
   // it that we definitely don't have a terminal available and that it should
   // bring up a new terminal if necessary.  See "man mailcap".
-  options.environ["MM_NOTTTY"] = "1";
+  options.environment["MM_NOTTTY"] = "1";
 
   base::Process process = base::LaunchProcess(argv, options);
   if (!process.IsValid())
@@ -69,12 +69,12 @@ namespace platform_util {
 // TODO(estade): It would be nice to be able to select the file in the file
 // manager, but that probably requires extending xdg-open. For now just
 // show the folder.
-bool ShowItemInFolder(const base::FilePath& full_path) {
+void ShowItemInFolder(const base::FilePath& full_path) {
   base::FilePath dir = full_path.DirName();
   if (!base::DirectoryExists(dir))
-    return false;
+    return;
 
-  return XDGOpen(dir.value(), false);
+  XDGOpen(dir.value(), false);
 }
 
 bool OpenItem(const base::FilePath& full_path) {
@@ -92,9 +92,9 @@ bool OpenExternal(const GURL& url, const OpenExternalOptions& options) {
 
 void OpenExternal(const GURL& url,
                   const OpenExternalOptions& options,
-                  const OpenExternalCallback& callback) {
+                  OpenExternalCallback callback) {
   // TODO(gabriel): Implement async open if callback is specified
-  callback.Run(OpenExternal(url, options) ? "" : "Failed to open");
+  std::move(callback).Run(OpenExternal(url, options) ? "" : "Failed to open");
 }
 
 bool MoveItemToTrash(const base::FilePath& full_path) {
@@ -140,11 +140,14 @@ bool MoveItemToTrash(const base::FilePath& full_path) {
 
 void Beep() {
   // echo '\a' > /dev/console
-  FILE* console = fopen("/dev/console", "r");
-  if (console == NULL)
-    return;
-  fprintf(console, "\a");
-  fclose(console);
+  FILE* fp = fopen("/dev/console", "a");
+  if (fp == nullptr) {
+    fp = fopen("/dev/tty", "a");
+  }
+  if (fp != nullptr) {
+    fprintf(fp, "\a");
+    fclose(fp);
+  }
 }
 
 bool GetDesktopName(std::string* setme) {

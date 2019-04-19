@@ -171,7 +171,7 @@ class Browser : public WindowListObserver {
 
   // Hide/Show dock.
   void DockHide();
-  void DockShow();
+  v8::Local<v8::Promise> DockShow(v8::Isolate* isolate);
   bool DockIsVisible();
 
   // Set docks' menu.
@@ -185,6 +185,10 @@ class Browser : public WindowListObserver {
 #if defined(OS_MACOSX) || defined(OS_LINUX)
   void ShowAboutPanel();
   void SetAboutPanelOptions(const base::DictionaryValue& options);
+#endif
+
+#if defined(OS_MACOSX) || defined(OS_WIN)
+  void ShowEmojiPanel();
 #endif
 
 #if defined(OS_WIN)
@@ -230,6 +234,8 @@ class Browser : public WindowListObserver {
   // windows.
   void Activate(bool has_visible_windows);
 
+  bool IsEmojiPanelSupported();
+
   // Tell the application the loading has been done.
   void WillFinishLaunching();
   void DidFinishLaunching(const base::DictionaryValue& launch_info);
@@ -244,7 +250,7 @@ class Browser : public WindowListObserver {
 
   // Stores the supplied |quit_closure|, to be run when the last Browser
   // instance is destroyed.
-  static void SetMainMessageLoopQuitClosure(base::OnceClosure quit_closure);
+  void SetMainMessageLoopQuitClosure(base::OnceClosure quit_closure);
 
   void AddObserver(BrowserObserver* obs) { observers_.AddObserver(obs); }
 
@@ -253,7 +259,7 @@ class Browser : public WindowListObserver {
   bool is_shutting_down() const { return is_shutdown_; }
   bool is_quiting() const { return is_quiting_; }
   bool is_ready() const { return is_ready_; }
-  util::Promise* WhenReady(v8::Isolate* isolate);
+  const util::Promise& WhenReady(v8::Isolate* isolate);
 
  protected:
   // Returns the version of application bundle or executable file.
@@ -287,9 +293,12 @@ class Browser : public WindowListObserver {
   // The browser is being shutdown.
   bool is_shutdown_ = false;
 
+  // Null until/unless the default main message loop is running.
+  base::OnceClosure quit_main_message_loop_;
+
   int badge_count_ = 0;
 
-  util::Promise* ready_promise_ = nullptr;
+  std::unique_ptr<util::Promise> ready_promise_;
 
 #if defined(OS_LINUX) || defined(OS_MACOSX)
   base::DictionaryValue about_panel_options_;

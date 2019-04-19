@@ -68,7 +68,7 @@ def download(text, url, path):
     web_file = urllib2.urlopen(url)
     file_size = int(web_file.info().getheaders("Content-Length")[0])
     downloaded_size = 0
-    block_size = 128
+    block_size = 4096
 
     ci = os.environ.get('CI') is not None
 
@@ -181,7 +181,7 @@ def get_electron_branding():
 
 def get_electron_version():
   SOURCE_ROOT = os.path.abspath(os.path.join(__file__, '..', '..', '..'))
-  version_file = os.path.join(SOURCE_ROOT, 'VERSION')
+  version_file = os.path.join(SOURCE_ROOT, 'ELECTRON_VERSION')
   with open(version_file) as f:
     return 'v' + f.read().strip()
 
@@ -216,85 +216,6 @@ def s3put(bucket, access_key, secret_key, prefix, key_prefix, files):
 
 def add_exec_bit(filename):
   os.chmod(filename, os.stat(filename).st_mode | stat.S_IEXEC)
-
-def parse_version(version):
-  if version[0] == 'v':
-    version = version[1:]
-
-  vs = version.split('.')
-  if len(vs) > 4:
-    return vs[0:4]
-  else:
-    return vs + ['0'] * (4 - len(vs))
-
-def clean_parse_version(v):
-  return parse_version(v.split("-")[0])        
-
-def is_stable(v):
-  return len(v.split(".")) == 3    
-
-def is_beta(v):
-  return 'beta' in v
-
-def is_nightly(v):
-  return 'nightly' in v
-
-def get_nightly_date():
-  return datetime.datetime.today().strftime('%Y%m%d')
-
-def get_last_major():
-  return execute(['node', 'script/get-last-major-for-master.js'])
-
-def get_next_nightly(v):
-  pv = clean_parse_version(v)
-  (major, minor, patch) = pv[0:3]
-
-  if (is_stable(v)):
-    patch = str(int(pv[2]) + 1)
-
-  if execute(['git', 'rev-parse', '--abbrev-ref', 'HEAD']) == "master":
-    major = str(get_last_major() + 1)
-    minor = '0'
-    patch = '0'
-
-  pre = 'nightly.' + get_nightly_date()
-  return make_version(major, minor, patch, pre)
-
-def non_empty(thing):
-  return thing.strip() != ''
-
-def beta_tag_compare(tag1, tag2):
-  p1 = parse_version(tag1)
-  p2 = parse_version(tag2)
-  return int(p1[3]) - int(p2[3])
-
-def get_next_beta(v):
-  pv = clean_parse_version(v)
-  tag_pattern = 'v' + pv[0] + '.' + pv[1] + '.' + pv[2] + '-beta.*'
-  tag_list = sorted(filter(
-    non_empty,
-    execute(['git', 'tag', '--list', '-l', tag_pattern]).strip().split('\n')
-  ), cmp=beta_tag_compare)
-  if len(tag_list) == 0:
-    return make_version(pv[0] , pv[1],  pv[2], 'beta.1')
-
-  lv = parse_version(tag_list[-1])
-  return make_version(pv[0] , pv[1],  pv[2], 'beta.' + str(int(lv[3]) + 1))
-
-def get_next_stable_from_pre(v):
-  pv = clean_parse_version(v)
-  (major, minor, patch) = pv[0:3]
-  return make_version(major, minor, patch)
-
-def get_next_stable_from_stable(v):
-  pv = clean_parse_version(v)
-  (major, minor, patch) = pv[0:3]
-  return make_version(major, minor, str(int(patch) + 1))
-
-def make_version(major, minor, patch, pre = None):
-  if pre is None:
-    return major + '.' + minor + '.' + patch
-  return major + "." + minor + "." + patch + '-' + pre
 
 def get_out_dir():
   out_dir = 'Debug'

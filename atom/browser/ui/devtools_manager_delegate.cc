@@ -5,11 +5,14 @@
 #include "atom/browser/ui/devtools_manager_delegate.h"
 
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include "atom/browser/atom_paths.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -21,7 +24,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
-#include "content/shell/grit/shell_resources.h"
+#include "electron/grit/electron_resources.h"
 #include "net/base/net_errors.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
@@ -66,7 +69,7 @@ std::unique_ptr<content::DevToolsSocketFactory> CreateSocketFactory() {
     int temp_port;
     std::string port_str =
         command_line.GetSwitchValueASCII(switches::kRemoteDebuggingPort);
-    if (base::StringToInt(port_str, &temp_port) && temp_port > 0 &&
+    if (base::StringToInt(port_str, &temp_port) && temp_port >= 0 &&
         temp_port < 65535) {
       port = temp_port;
     } else {
@@ -83,8 +86,10 @@ std::unique_ptr<content::DevToolsSocketFactory> CreateSocketFactory() {
 
 // static
 void DevToolsManagerDelegate::StartHttpHandler() {
+  base::FilePath user_dir;
+  base::PathService::Get(DIR_USER_DATA, &user_dir);
   content::DevToolsAgentHost::StartRemoteDebuggingServer(
-      CreateSocketFactory(), base::FilePath(), base::FilePath());
+      CreateSocketFactory(), user_dir, base::FilePath());
 }
 
 DevToolsManagerDelegate::DevToolsManagerDelegate() {}
@@ -93,11 +98,13 @@ DevToolsManagerDelegate::~DevToolsManagerDelegate() {}
 
 void DevToolsManagerDelegate::Inspect(content::DevToolsAgentHost* agent_host) {}
 
-bool DevToolsManagerDelegate::HandleCommand(
+void DevToolsManagerDelegate::HandleCommand(
     content::DevToolsAgentHost* agent_host,
     content::DevToolsAgentHostClient* client,
-    base::DictionaryValue* command) {
-  return false;
+    const std::string& method,
+    const std::string& message,
+    NotHandledCallback callback) {
+  std::move(callback).Run(message);
 }
 
 scoped_refptr<content::DevToolsAgentHost>

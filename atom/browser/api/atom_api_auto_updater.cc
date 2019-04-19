@@ -147,9 +147,11 @@ void Initialize(v8::Local<v8::Object> exports,
   v8::Isolate* isolate = context->GetIsolate();
   mate::Dictionary dict(isolate, exports);
   dict.Set("autoUpdater", AutoUpdater::Create(isolate));
-  dict.Set("AutoUpdater", AutoUpdater::GetConstructor(isolate)->GetFunction());
+  dict.Set("AutoUpdater", AutoUpdater::GetConstructor(isolate)
+                              ->GetFunction(context)
+                              .ToLocalChecked());
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_auto_updater, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_auto_updater, Initialize)

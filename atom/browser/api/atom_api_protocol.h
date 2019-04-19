@@ -14,8 +14,11 @@
 #include "atom/browser/api/trackable_object.h"
 #include "atom/browser/atom_browser_context.h"
 #include "atom/browser/net/atom_url_request_job_factory.h"
+#include "atom/common/promise_util.h"
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "native_mate/arguments.h"
 #include "native_mate/dictionary.h"
@@ -31,15 +34,15 @@ namespace atom {
 namespace api {
 
 std::vector<std::string> GetStandardSchemes();
-void RegisterStandardSchemes(const std::vector<std::string>& schemes,
-                             mate::Arguments* args);
+
+void RegisterSchemesAsPrivileged(v8::Local<v8::Value> val,
+                                 mate::Arguments* args);
 
 class Protocol : public mate::TrackableObject<Protocol> {
  public:
   using Handler =
       base::Callback<void(const base::DictionaryValue&, v8::Local<v8::Value>)>;
   using CompletionCallback = base::Callback<void(v8::Local<v8::Value>)>;
-  using BooleanCallback = base::Callback<void(bool)>;
 
   static mate::Handle<Protocol> Create(v8::Isolate* isolate,
                                        AtomBrowserContext* browser_context);
@@ -92,9 +95,6 @@ class Protocol : public mate::TrackableObject<Protocol> {
     DISALLOW_COPY_AND_ASSIGN(CustomProtocolHandler);
   };
 
-  // Register schemes that can handle service worker.
-  void RegisterServiceWorkerSchemes(const std::vector<std::string>& schemes);
-
   // Register the protocol with certain request job.
   template <typename RequestJob>
   void RegisterProtocol(const std::string& scheme,
@@ -104,8 +104,8 @@ class Protocol : public mate::TrackableObject<Protocol> {
     args->GetNext(&callback);
     auto* getter = static_cast<URLRequestContextGetter*>(
         browser_context_->GetRequestContext());
-    content::BrowserThread::PostTaskAndReplyWithResult(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraitsAndReplyWithResult(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&Protocol::RegisterProtocolInIO<RequestJob>,
                        base::RetainedRef(getter), isolate(), scheme, handler),
         base::BindOnce(&Protocol::OnIOCompleted, GetWeakPtr(), callback));
@@ -134,11 +134,7 @@ class Protocol : public mate::TrackableObject<Protocol> {
       const std::string& scheme);
 
   // Whether the protocol has handler registered.
-  void IsProtocolHandled(const std::string& scheme,
-                         const BooleanCallback& callback);
-  static bool IsProtocolHandledInIO(
-      scoped_refptr<URLRequestContextGetter> request_context_getter,
-      const std::string& scheme);
+  v8::Local<v8::Promise> IsProtocolHandled(const std::string& scheme);
 
   // Replace the protocol handler with a new one.
   template <typename RequestJob>
@@ -149,8 +145,8 @@ class Protocol : public mate::TrackableObject<Protocol> {
     args->GetNext(&callback);
     auto* getter = static_cast<URLRequestContextGetter*>(
         browser_context_->GetRequestContext());
-    content::BrowserThread::PostTaskAndReplyWithResult(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraitsAndReplyWithResult(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&Protocol::InterceptProtocolInIO<RequestJob>,
                        base::RetainedRef(getter), isolate(), scheme, handler),
         base::BindOnce(&Protocol::OnIOCompleted, GetWeakPtr(), callback));

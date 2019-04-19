@@ -24,7 +24,8 @@ class AtomMainDelegate : public content::ContentMainDelegate {
   // content::ContentMainDelegate:
   bool BasicStartupComplete(int* exit_code) override;
   void PreSandboxStartup() override;
-  void PreContentInitialization() override;
+  void PreCreateMainMessageLoop() override;
+  void PostEarlyInitialization(bool is_running_tests) override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
   content::ContentUtilityClient* CreateContentUtilityClient() override;
@@ -35,6 +36,8 @@ class AtomMainDelegate : public content::ContentMainDelegate {
   bool ShouldSendMachPort(const std::string& process_type) override;
   bool DelaySandboxInitialization(const std::string& process_type) override;
 #endif
+  bool ShouldLockSchemeRegistry() override;
+  bool ShouldCreateFeatureList() override;
 
  private:
 #if defined(OS_MACOSX)

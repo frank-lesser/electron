@@ -15,15 +15,16 @@
 #include "atom/common/color_util.h"
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/value_converter.h"
+#include "atom/common/node_includes.h"
 #include "atom/common/options_switches.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"  // nogncheck
+#include "content/browser/renderer_host/render_widget_host_owner_delegate.h"  // nogncheck
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "gin/converter.h"
 #include "native_mate/dictionary.h"
 #include "ui/gl/gpu_switching_manager.h"
-
-#include "atom/common/node_includes.h"
 
 namespace atom {
 
@@ -129,7 +130,7 @@ void BrowserWindow::RenderViewCreated(
       render_view_host->GetProcess()->GetID(),
       render_view_host->GetRoutingID());
   if (impl)
-    impl->SetBackgroundOpaque(false);
+    impl->owner_delegate()->SetBackgroundOpaque(false);
 }
 
 void BrowserWindow::DidFirstVisuallyNonEmptyPaint() {
@@ -181,7 +182,14 @@ bool BrowserWindow::OnMessageReceived(const IPC::Message& message,
 }
 
 void BrowserWindow::OnCloseContents() {
-  DCHECK(web_contents());
+  // On some machines it may happen that the window gets destroyed for twice,
+  // checking web_contents() can effectively guard against that.
+  // https://github.com/electron/electron/issues/16202.
+  //
+  // TODO(zcbenz): We should find out the root cause and improve the closing
+  // procedure of BrowserWindow.
+  if (!web_contents())
+    return;
 
   // Close all child windows before closing current window.
   v8::Locker locker(isolate());
@@ -230,7 +238,7 @@ void BrowserWindow::OnCloseButtonClicked(bool* prevent_default) {
     return;
 
   if (web_contents()->NeedToFireBeforeUnload())
-    web_contents()->DispatchBeforeUnload();
+    web_contents()->DispatchBeforeUnload(false /* auto_cancel */);
   else
     web_contents()->Close();
 }
@@ -303,7 +311,29 @@ void BrowserWindow::SetBackgroundColor(const std::string& color_name) {
 }
 
 void BrowserWindow::SetBrowserView(v8::Local<v8::Value> value) {
-  TopLevelWindow::SetBrowserView(value);
+  TopLevelWindow::ResetBrowserViews();
+  TopLevelWindow::AddBrowserView(value);
+#if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, draggable_regions_);
+#endif
+}
+
+void BrowserWindow::AddBrowserView(v8::Local<v8::Value> value) {
+  TopLevelWindow::AddBrowserView(value);
+#if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, draggable_regions_);
+#endif
+}
+
+void BrowserWindow::RemoveBrowserView(v8::Local<v8::Value> value) {
+  TopLevelWindow::RemoveBrowserView(value);
+#if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, draggable_regions_);
+#endif
+}
+
+void BrowserWindow::ResetBrowserViews() {
+  TopLevelWindow::ResetBrowserViews();
 #if defined(OS_MACOSX)
   UpdateDraggableRegions(nullptr, draggable_regions_);
 #endif
@@ -311,7 +341,7 @@ void BrowserWindow::SetBrowserView(v8::Local<v8::Value> value) {
 
 void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
                                 v8::Local<v8::Value> value) {
-  std::string type = mate::V8ToString(value);
+  std::string type = gin::V8ToString(isolate, value);
 
   auto* render_view_host = web_contents()->GetRenderViewHost();
   if (render_view_host) {
@@ -319,7 +349,8 @@ void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
         render_view_host->GetProcess()->GetID(),
         render_view_host->GetRoutingID());
     if (impl)
-      impl->SetBackgroundOpaque(type.empty() ? !window_->transparent() : false);
+      impl->owner_delegate()->SetBackgroundOpaque(
+          type.empty() ? !window_->transparent() : false);
   }
 
   TopLevelWindow::SetVibrancy(isolate, value);
@@ -449,4 +480,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_window, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_window, Initialize)

@@ -8,6 +8,7 @@
 #include "atom/common/native_mate_converters/value_converter.h"
 #include "atom/common/node_includes.h"
 #include "native_mate/dictionary.h"
+#include "ui/gfx/animation/animation.h"
 #include "ui/gfx/color_utils.h"
 
 namespace atom {
@@ -43,6 +44,19 @@ bool SystemPreferences::IsHighContrastColorScheme() {
 }
 #endif  // !defined(OS_WIN)
 
+v8::Local<v8::Value> SystemPreferences::GetAnimationSettings(
+    v8::Isolate* isolate) {
+  mate::Dictionary dict = mate::Dictionary::CreateEmpty(isolate);
+  dict.SetHidden("simple", true);
+  dict.Set("shouldRenderRichAnimation",
+           gfx::Animation::ShouldRenderRichAnimation());
+  dict.Set("scrollAnimationsEnabledBySystem",
+           gfx::Animation::ScrollAnimationsEnabledBySystem());
+  dict.Set("prefersReducedMotion", gfx::Animation::PrefersReducedMotion());
+
+  return dict.GetHandle();
+}
+
 // static
 mate::Handle<SystemPreferences> SystemPreferences::Create(
     v8::Isolate* isolate) {
@@ -55,10 +69,13 @@ void SystemPreferences::BuildPrototype(
     v8::Local<v8::FunctionTemplate> prototype) {
   prototype->SetClassName(mate::StringToV8(isolate, "SystemPreferences"));
   mate::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
-#if defined(OS_WIN)
-      .SetMethod("getAccentColor", &SystemPreferences::GetAccentColor)
-      .SetMethod("isAeroGlassEnabled", &SystemPreferences::IsAeroGlassEnabled)
+#if defined(OS_WIN) || defined(OS_MACOSX)
       .SetMethod("getColor", &SystemPreferences::GetColor)
+      .SetMethod("getAccentColor", &SystemPreferences::GetAccentColor)
+#endif
+
+#if defined(OS_WIN)
+      .SetMethod("isAeroGlassEnabled", &SystemPreferences::IsAeroGlassEnabled)
 #elif defined(OS_MACOSX)
       .SetMethod("postNotification", &SystemPreferences::PostNotification)
       .SetMethod("subscribeNotification",
@@ -89,12 +106,22 @@ void SystemPreferences::BuildPrototype(
                  &SystemPreferences::GetAppLevelAppearance)
       .SetMethod("setAppLevelAppearance",
                  &SystemPreferences::SetAppLevelAppearance)
+      .SetMethod("getSystemColor", &SystemPreferences::GetSystemColor)
+      .SetMethod("canPromptTouchID", &SystemPreferences::CanPromptTouchID)
+      .SetMethod("promptTouchID", &SystemPreferences::PromptTouchID)
+      .SetMethod("isTrustedAccessibilityClient",
+                 &SystemPreferences::IsTrustedAccessibilityClient)
+      .SetMethod("getMediaAccessStatus",
+                 &SystemPreferences::GetMediaAccessStatus)
+      .SetMethod("askForMediaAccess", &SystemPreferences::AskForMediaAccess)
 #endif
       .SetMethod("isInvertedColorScheme",
                  &SystemPreferences::IsInvertedColorScheme)
       .SetMethod("isHighContrastColorScheme",
                  &SystemPreferences::IsHighContrastColorScheme)
-      .SetMethod("isDarkMode", &SystemPreferences::IsDarkMode);
+      .SetMethod("isDarkMode", &SystemPreferences::IsDarkMode)
+      .SetMethod("getAnimationSettings",
+                 &SystemPreferences::GetAnimationSettings);
 }
 
 }  // namespace api
@@ -112,10 +139,11 @@ void Initialize(v8::Local<v8::Object> exports,
   v8::Isolate* isolate = context->GetIsolate();
   mate::Dictionary dict(isolate, exports);
   dict.Set("systemPreferences", SystemPreferences::Create(isolate));
-  dict.Set("SystemPreferences",
-           SystemPreferences::GetConstructor(isolate)->GetFunction());
+  dict.Set("SystemPreferences", SystemPreferences::GetConstructor(isolate)
+                                    ->GetFunction(context)
+                                    .ToLocalChecked());
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_system_preferences, Initialize);
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_system_preferences, Initialize)

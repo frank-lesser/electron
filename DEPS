@@ -10,9 +10,9 @@ gclient_gn_args = [
 
 vars = {
   'chromium_version':
-    '69.0.3497.106',
+    '75.0.3740.3',
   'node_version':
-    '4d44266b78256449dd6ae86e419e3ec07257b569',
+    '2dc0f8811b2b295c08d797b8a11b030234c98502',
 
   'boto_version': 'f7574aa6cc2c819430c1f05e9a1a1a666ef8169b',
   'pyyaml_version': '3.12',
@@ -99,8 +99,6 @@ hooks = [
     'action': [
       'python',
       'src/electron/script/update-external-binaries.py',
-      '--root-url=http://github.com/electron/electron-frameworks/releases/download',
-      '--version=v1.4.0',
     ],
   },
   {
@@ -109,7 +107,7 @@ hooks = [
     'action': [
       'python',
       '-c',
-      'import os; os.chdir("src"); os.chdir("electron"); os.system("npm install")',
+      'import os, subprocess; os.chdir(os.path.join("src", "electron")); subprocess.check_call(["python", "script/lib/npm.py", "install"]);',
     ],
   },
   {
@@ -119,7 +117,7 @@ hooks = [
     'action': [
       'python',
       '-c',
-      'import os; os.chdir("src"); os.chdir("electron"); os.chdir("vendor"); os.chdir("boto"); os.system("python setup.py build");',
+      'import os, subprocess; os.chdir(os.path.join("src", "electron", "vendor", "boto")); subprocess.check_call(["python", "setup.py", "build"]);',
     ],
   },
   {
@@ -129,9 +127,9 @@ hooks = [
     'action': [
       'python',
       '-c',
-      'import os; os.chdir("src"); os.chdir("electron"); os.chdir("vendor"); os.chdir("requests"); os.system("python setup.py build");',
+      'import os, subprocess; os.chdir(os.path.join("src", "electron", "vendor", "requests")); subprocess.check_call(["python", "setup.py", "build"]);',
     ],
-  }
+  },
 ]
 
 recursedeps = [

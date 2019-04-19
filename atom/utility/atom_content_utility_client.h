@@ -6,6 +6,7 @@
 #define ATOM_UTILITY_ATOM_CONTENT_UTILITY_CLIENT_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -25,9 +26,14 @@ class AtomContentUtilityClient : public content::ContentUtilityClient {
 
   void UtilityThreadStarted() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  void RegisterServices(StaticServiceMap* services) override;
+  bool HandleServiceRequest(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request) override;
 
  private:
+  std::unique_ptr<service_manager::Service> MaybeCreateMainThreadService(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request);
 #if BUILDFLAG(ENABLE_PRINTING) && defined(OS_WIN)
   std::unique_ptr<printing::PrintingHandler> printing_handler_;
 #endif

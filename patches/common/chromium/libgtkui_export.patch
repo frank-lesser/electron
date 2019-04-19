@@ -6,7 +6,7 @@ Subject: libgtkui_export.patch
 Export libgtkui symbols for the GN component build.
 
 diff --git a/chrome/browser/ui/libgtkui/gtk_util.h b/chrome/browser/ui/libgtkui/gtk_util.h
-index d9f245070249f5f153bd8fe11e0a5e718c7d3629..a0f033c3e3f7f3996897f5f969b2a209d7d5cf3f 100644
+index adea4a859d96e219acc92c9178574f089a57944c..df615a91c00d22cabafffebe151728010fe9c1c4 100644
 --- a/chrome/browser/ui/libgtkui/gtk_util.h
 +++ b/chrome/browser/ui/libgtkui/gtk_util.h
 @@ -11,6 +11,7 @@
@@ -17,9 +17,9 @@ index d9f245070249f5f153bd8fe11e0a5e718c7d3629..a0f033c3e3f7f3996897f5f969b2a209
  
  namespace aura {
  class Window;
-@@ -55,10 +56,10 @@ SkColor NormalURLColor(SkColor foreground);
- // saturation than to look exactly like the foreground color.
- SkColor SelectedURLColor(SkColor foreground, SkColor background);
+@@ -33,10 +34,10 @@ namespace libgtkui {
+ 
+ extern const color_utils::HSL kDefaultTintFrameIncognito;
  
 -void GtkInitFromCommandLine(const base::CommandLine& command_line);
 +LIBGTKUI_EXPORT void GtkInitFromCommandLine(const base::CommandLine& command_line);
@@ -30,7 +30,7 @@ index d9f245070249f5f153bd8fe11e0a5e718c7d3629..a0f033c3e3f7f3996897f5f969b2a209
  
  guint GetGdkKeyCodeForAccelerator(const ui::Accelerator& accelerator);
  
-@@ -73,7 +74,7 @@ void TurnButtonBlue(GtkWidget* button);
+@@ -51,7 +52,7 @@ void TurnButtonBlue(GtkWidget* button);
  
  // Sets |dialog| as transient for |parent|, which will keep it on top and center
  // it above |parent|. Do nothing if |parent| is nullptr.
@@ -39,7 +39,16 @@ index d9f245070249f5f153bd8fe11e0a5e718c7d3629..a0f033c3e3f7f3996897f5f969b2a209
  
  // Gets the transient parent aura window for |dialog|.
  aura::Window* GetAuraTransientParent(GtkWidget* dialog);
-@@ -193,7 +194,7 @@ void RenderBackground(const gfx::Size& size,
+@@ -157,7 +158,7 @@ void ApplyCssToContext(GtkStyleContext* context, const std::string& css);
+ 
+ // Get the 'color' property from the style context created by
+ // GetStyleContextFromCss(|css_selector|).
+-SkColor GetFgColor(const std::string& css_selector);
++LIBGTKUI_EXPORT SkColor GetFgColor(const std::string& css_selector);
+ 
+ ScopedCssProvider GetCssProvider(const std::string& css);
+ 
+@@ -170,7 +171,7 @@ void RenderBackground(const gfx::Size& size,
  // Renders a background from the style context created by
  // GetStyleContextFromCss(|css_selector|) into a 24x24 bitmap and
  // returns the average color.
@@ -49,18 +58,18 @@ index d9f245070249f5f153bd8fe11e0a5e718c7d3629..a0f033c3e3f7f3996897f5f969b2a209
  // Renders the border from the style context created by
  // GetStyleContextFromCss(|css_selector|) into a 24x24 bitmap and
 diff --git a/chrome/browser/ui/libgtkui/skia_utils_gtk.h b/chrome/browser/ui/libgtkui/skia_utils_gtk.h
-index e05fbe9d8b2fe537a5eecbd3642dcc9eb848f3d7..3afca9a72ab69fed0144cfff8159aff5a480c4f5 100644
+index bd6ed68a11b0b6c08962f688c799bd0f6b8a8d0e..b1184475e0ab9f381dc3c78b1092e2e0ec59d60b 100644
 --- a/chrome/browser/ui/libgtkui/skia_utils_gtk.h
 +++ b/chrome/browser/ui/libgtkui/skia_utils_gtk.h
-@@ -7,6 +7,7 @@
- 
+@@ -8,6 +8,7 @@
+ #include <gtk/gtk.h>
  #include <stdint.h>
  
 +#include "chrome/browser/ui/libgtkui/libgtkui_export.h"
  #include "third_party/skia/include/core/SkColor.h"
  
- typedef struct _GdkColor GdkColor;
-@@ -41,7 +42,7 @@ const SkBitmap GdkPixbufToImageSkia(GdkPixbuf* pixbuf);
+ #if !GTK_CHECK_VERSION(3, 90, 0)
+@@ -48,7 +49,7 @@ const SkBitmap GdkPixbufToImageSkia(GdkPixbuf* pixbuf);
  // Convert and copy a SkBitmap to a GdkPixbuf. NOTE: this uses BGRAToRGBA, so
  // it is an expensive operation.  The returned GdkPixbuf will have a refcount of
  // 1, and the caller is responsible for unrefing it when done.

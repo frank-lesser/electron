@@ -83,6 +83,19 @@ void GPUInfoEnumerator::EndVideoEncodeAcceleratorSupportedProfile() {
   value_stack.pop();
 }
 
+void GPUInfoEnumerator::BeginImageDecodeAcceleratorSupportedProfile() {
+  value_stack.push(std::move(current));
+  current = std::make_unique<base::DictionaryValue>();
+}
+
+void GPUInfoEnumerator::EndImageDecodeAcceleratorSupportedProfile() {
+  auto& top_value = value_stack.top();
+  top_value->SetDictionary(kImageDecodeAcceleratorSupportedProfileKey,
+                           std::move(current));
+  current = std::move(top_value);
+  value_stack.pop();
+}
+
 void GPUInfoEnumerator::BeginAuxAttributes() {
   value_stack.push(std::move(current));
   current = std::make_unique<base::DictionaryValue>();
@@ -103,6 +116,18 @@ void GPUInfoEnumerator::BeginOverlayCapability() {
 void GPUInfoEnumerator::EndOverlayCapability() {
   auto& top_value = value_stack.top();
   top_value->SetDictionary(kOverlayCapabilityKey, std::move(current));
+  current = std::move(top_value);
+  value_stack.pop();
+}
+
+void GPUInfoEnumerator::BeginDx12VulkanVersionInfo() {
+  value_stack.push(std::move(current));
+  current = std::make_unique<base::DictionaryValue>();
+}
+
+void GPUInfoEnumerator::EndDx12VulkanVersionInfo() {
+  auto& top_value = value_stack.top();
+  top_value->SetDictionary(kDx12VulkanVersionInfoKey, std::move(current));
   current = std::move(top_value);
   value_stack.pop();
 }

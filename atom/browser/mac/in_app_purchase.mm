@@ -6,6 +6,8 @@
 
 #include "base/bind.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 #import <CommonCrypto/CommonCrypto.h>
@@ -23,7 +25,7 @@
   NSInteger quantity_;
 }
 
-- (id)initWithCallback:(const in_app_purchase::InAppPurchaseCallback&)callback
+- (id)initWithCallback:(in_app_purchase::InAppPurchaseCallback)callback
               quantity:(NSInteger)quantity;
 
 - (void)purchaseProduct:(NSString*)productID;
@@ -40,10 +42,10 @@
  * @param callback - The callback that will be called when the payment is added
  * to the queue.
  */
-- (id)initWithCallback:(const in_app_purchase::InAppPurchaseCallback&)callback
+- (id)initWithCallback:(in_app_purchase::InAppPurchaseCallback)callback
               quantity:(NSInteger)quantity {
   if ((self = [super init])) {
-    callback_ = callback;
+    callback_ = std::move(callback);
     quantity_ = quantity;
   }
 
@@ -117,8 +119,9 @@
  */
 - (void)runCallback:(bool)isProductValid {
   if (callback_) {
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     base::Bind(callback_, isProductValid));
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
+        base::BindOnce(std::move(callback_), isProductValid));
   }
   // Release this delegate.
   [self release];
@@ -175,9 +178,9 @@ std::string GetReceiptURL() {
 
 void PurchaseProduct(const std::string& productID,
                      int quantity,
-                     const InAppPurchaseCallback& callback) {
-  auto* iap =
-      [[InAppPurchase alloc] initWithCallback:callback quantity:quantity];
+                     InAppPurchaseCallback callback) {
+  auto* iap = [[InAppPurchase alloc] initWithCallback:std::move(callback)
+                                             quantity:quantity];
 
   [iap purchaseProduct:base::SysUTF8ToNSString(productID)];
 }

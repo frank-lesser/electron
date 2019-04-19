@@ -160,7 +160,8 @@ namespace atom {
 NativeBrowserViewMac::NativeBrowserViewMac(
     InspectableWebContents* inspectable_web_contents)
     : NativeBrowserView(inspectable_web_contents) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.autoresizingMask = kDefaultAutoResizingMask;
 }
 
@@ -174,13 +175,23 @@ void NativeBrowserViewMac::SetAutoResizeFlags(uint8_t flags) {
   if (flags & kAutoResizeHeight) {
     autoresizing_mask |= NSViewHeightSizable;
   }
+  if (flags & kAutoResizeHorizontal) {
+    autoresizing_mask |=
+        NSViewMaxXMargin | NSViewMinXMargin | NSViewWidthSizable;
+  }
+  if (flags & kAutoResizeVertical) {
+    autoresizing_mask |=
+        NSViewMaxYMargin | NSViewMinYMargin | NSViewHeightSizable;
+  }
 
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.autoresizingMask = autoresizing_mask;
 }
 
 void NativeBrowserViewMac::SetBounds(const gfx::Rect& bounds) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   auto* superview = view.superview;
   const auto superview_height = superview ? superview.frame.size.height : 0;
   view.frame =
@@ -189,15 +200,17 @@ void NativeBrowserViewMac::SetBounds(const gfx::Rect& bounds) {
 }
 
 void NativeBrowserViewMac::SetBackgroundColor(SkColor color) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.wantsLayer = YES;
   view.layer.backgroundColor = skia::CGColorCreateFromSkColor(color);
 }
 
 void NativeBrowserViewMac::UpdateDraggableRegions(
     const std::vector<gfx::Rect>& drag_exclude_rects) {
-  NSView* web_view = GetWebContents()->GetNativeView();
-  NSView* inspectable_view = GetInspectableWebContentsView()->GetNativeView();
+  NSView* web_view = GetWebContents()->GetNativeView().GetNativeNSView();
+  NSView* inspectable_view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   NSView* window_content_view = inspectable_view.superview;
   const auto window_content_view_height = NSHeight(window_content_view.bounds);
 

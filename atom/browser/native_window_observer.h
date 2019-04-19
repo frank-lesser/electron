@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/observer_list_types.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
 #include "ui/base/window_open_disposition.h"
@@ -22,9 +23,9 @@ class Rect;
 
 namespace atom {
 
-class NativeWindowObserver {
+class NativeWindowObserver : public base::CheckedObserver {
  public:
-  virtual ~NativeWindowObserver() {}
+  ~NativeWindowObserver() override {}
 
   // Called when the web page in window wants to create a popup window.
   virtual void WillCreatePopupWindow(const base::string16& frame_name,
@@ -94,7 +95,8 @@ class NativeWindowObserver {
 #endif
 
   // Called on Windows when App Commands arrive (WM_APPCOMMAND)
-  virtual void OnExecuteWindowsCommand(const std::string& command_name) {}
+  // Some commands are implemented on on other platforms as well
+  virtual void OnExecuteAppCommand(const std::string& command_name) {}
 };
 
 }  // namespace atom

@@ -5,6 +5,7 @@
 #include "atom/app/atom_main.h"
 
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 #if defined(OS_WIN)
@@ -30,6 +31,7 @@
 #include "atom/app/atom_main_delegate.h"  // NOLINT
 #include "content/public/app/content_main.h"
 #else  // defined(OS_LINUX)
+#include <mach-o/dyld.h>
 #include <unistd.h>
 #include <cstdio>
 #include "atom/app/atom_library_main.h"
@@ -41,13 +43,17 @@
 #include "base/i18n/icu_util.h"
 #include "electron/buildflags/buildflags.h"
 
+#if defined(HELPER_EXECUTABLE) && !defined(MAS_BUILD)
+#include "sandbox/mac/seatbelt_exec.h"  // nogncheck
+#endif
+
 namespace {
 
 #if BUILDFLAG(ENABLE_RUN_AS_NODE)
 const char kRunAsNode[] = "ELECTRON_RUN_AS_NODE";
 #endif
 
-bool IsEnvSet(const char* name) {
+ALLOW_UNUSED_TYPE bool IsEnvSet(const char* name) {
 #if defined(OS_WIN)
   size_t required_size;
   getenv_s(&required_size, nullptr, 0, name);
@@ -69,11 +75,11 @@ void FixStdioStreams() {
   // For details see https://github.com/libuv/libuv/issues/2062
   struct stat st;
   if (fstat(STDIN_FILENO, &st) < 0 && errno == EBADF)
-    freopen("/dev/null", "r", stdin);
+    ignore_result(freopen("/dev/null", "r", stdin));
   if (fstat(STDOUT_FILENO, &st) < 0 && errno == EBADF)
-    freopen("/dev/null", "w", stdout);
+    ignore_result(freopen("/dev/null", "w", stdout));
   if (fstat(STDERR_FILENO, &st) < 0 && errno == EBADF)
-    freopen("/dev/null", "w", stderr);
+    ignore_result(freopen("/dev/null", "w", stderr));
 }
 #endif
 
@@ -206,6 +212,35 @@ int main(int argc, char* argv[]) {
     return AtomInitializeICUandStartNode(argc, argv);
   }
 #endif
+
+#if defined(HELPER_EXECUTABLE) && !defined(MAS_BUILD)
+  uint32_t exec_path_size = 0;
+  int rv = _NSGetExecutablePath(NULL, &exec_path_size);
+  if (rv != -1) {
+    fprintf(stderr, "_NSGetExecutablePath: get length failed\n");
+    abort();
+  }
+
+  std::unique_ptr<char[]> exec_path(new char[exec_path_size]);
+  rv = _NSGetExecutablePath(exec_path.get(), &exec_path_size);
+  if (rv != 0) {
+    fprintf(stderr, "_NSGetExecutablePath: get path failed\n");
+    abort();
+  }
+  sandbox::SeatbeltExecServer::CreateFromArgumentsResult seatbelt =
+      sandbox::SeatbeltExecServer::CreateFromArguments(exec_path.get(), argc,
+                                                       argv);
+  if (seatbelt.sandbox_required) {
+    if (!seatbelt.server) {
+      fprintf(stderr, "Failed to create seatbelt sandbox server.\n");
+      abort();
+    }
+    if (!seatbelt.server->InitializeSandbox()) {
+      fprintf(stderr, "Failed to initialize sandbox.\n");
+      abort();
+    }
+  }
+#endif  // defined(HELPER_EXECUTABLE) && !defined(MAS_BUILD)
 
   return AtomMain(argc, argv);
 }

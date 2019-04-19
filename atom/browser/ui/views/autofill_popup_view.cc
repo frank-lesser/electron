@@ -56,19 +56,16 @@ AutofillPopupView::~AutofillPopupView() {
 }
 
 void AutofillPopupView::Show() {
-  if (!popup_)
+  bool visible = parent_widget_->IsVisible();
+#if BUILDFLAG(ENABLE_OSR)
+  visible = visible || view_proxy_;
+#endif
+  if (!popup_ || !visible || parent_widget_->IsClosed())
     return;
 
   const bool initialize_widget = !GetWidget();
   if (initialize_widget) {
     parent_widget_->AddObserver(this);
-    views::FocusManager* focus_manager = parent_widget_->GetFocusManager();
-    focus_manager->RegisterAccelerator(
-        ui::Accelerator(ui::VKEY_RETURN, ui::EF_NONE),
-        ui::AcceleratorManager::kNormalPriority, this);
-    focus_manager->RegisterAccelerator(
-        ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE),
-        ui::AcceleratorManager::kNormalPriority, this);
 
     // The widget is destroyed by the corresponding NativeWidget, so we use
     // a weak pointer to hold the reference and don't have to worry about
@@ -201,7 +198,7 @@ void AutofillPopupView::DrawAutofillEntry(gfx::Canvas* canvas,
     canvas->DrawStringRectWithFlags(
         popup_->GetLabelAt(index), popup_->GetLabelFontListForRow(index),
         GetNativeTheme()->GetSystemColor(
-            ui::NativeTheme::kColorId_ResultsTableNormalDimmedText),
+            ui::NativeTheme::kColorId_ResultsTableDimmedText),
         gfx::Rect(label_x_align_left, entry_rect.y(), label_width,
                   entry_rect.height()),
         text_align);
@@ -487,7 +484,6 @@ void AutofillPopupView::ClearSelection() {
 }
 
 void AutofillPopupView::RemoveObserver() {
-  parent_widget_->GetFocusManager()->UnregisterAccelerators(this);
   parent_widget_->RemoveObserver(this);
   views::WidgetFocusManager::GetInstance()->RemoveFocusChangeListener(this);
 }

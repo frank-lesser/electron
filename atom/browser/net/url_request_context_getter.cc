@@ -22,19 +22,19 @@
 #include "atom/browser/net/system_network_context_manager.h"
 #include "base/command_line.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/prefs/value_map_pref_store.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_network_transaction_factory.h"
 #include "content/public/browser/network_service_instance.h"
-#include "content/public/browser/resource_context.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/cert/multi_log_ct_verifier.h"
 #include "net/cookies/cookie_monster.h"
-#include "net/dns/mapped_host_resolver.h"
+#include "net/dns/mapped_host_resolver.h"  // nogncheck
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_auth_preferences.h"
 #include "net/http/http_auth_scheme.h"
@@ -101,26 +101,9 @@ void SetupAtomURLRequestJobFactory(
 
 }  // namespace
 
-class ResourceContext : public content::ResourceContext {
- public:
-  ResourceContext() = default;
-  ~ResourceContext() override = default;
-
-  net::URLRequestContext* GetRequestContext() override {
-    return request_context_;
-  }
-
- private:
-  friend class URLRequestContextGetter;
-
-  net::URLRequestContext* request_context_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(ResourceContext);
-};
-
 URLRequestContextGetter::Handle::Handle(
     base::WeakPtr<AtomBrowserContext> browser_context)
-    : resource_context_(new ResourceContext),
+    : resource_context_(new content::ResourceContext),
       browser_context_(browser_context),
       initialized_(false) {}
 
@@ -161,7 +144,8 @@ URLRequestContextGetter::Handle::GetNetworkContext() {
 network::mojom::NetworkContextParamsPtr
 URLRequestContextGetter::Handle::CreateNetworkContextParams() {
   network::mojom::NetworkContextParamsPtr network_context_params =
-      SystemNetworkContextManager::CreateDefaultNetworkContextParams();
+      SystemNetworkContextManager::GetInstance()
+          ->CreateDefaultNetworkContextParams();
 
   network_context_params->user_agent = browser_context_->GetUserAgent();
 
@@ -171,8 +155,6 @@ URLRequestContextGetter::Handle::CreateNetworkContextParams() {
   network_context_params->accept_language =
       net::HttpUtil::GenerateAcceptLanguageHeader(
           AtomBrowserClient::Get()->GetApplicationLocale());
-
-  network_context_params->enable_data_url_support = false;
 
   if (!browser_context_->IsOffTheRecord()) {
     auto base_path = browser_context_->GetPath();
@@ -184,10 +166,11 @@ URLRequestContextGetter::Handle::CreateNetworkContextParams() {
         base_path.Append(chrome::kNetworkPersistentStateFilename);
     network_context_params->cookie_path =
         base_path.Append(chrome::kCookieFilename);
-    network_context_params->channel_id_path =
-        base_path.Append(chrome::kChannelIDFilename);
     network_context_params->restore_old_session_cookies = false;
     network_context_params->persist_session_cookies = false;
+    // TODO(deepak1556): Matches the existing behavior https://git.io/fxHMl,
+    // enable encryption as a followup.
+    network_context_params->enable_encrypted_cookies = false;
   }
 
   // TODO(deepak1556): Decide the stand on chrome ct policy and
@@ -222,8 +205,8 @@ void URLRequestContextGetter::Handle::ShutdownOnUIThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (main_request_context_getter_.get()) {
     if (BrowserThread::IsThreadInitialized(BrowserThread::IO)) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&URLRequestContextGetter::NotifyContextShuttingDown,
                          base::RetainedRef(main_request_context_getter_),
                          std::move(resource_context_)));
@@ -256,8 +239,13 @@ URLRequestContextGetter::~URLRequestContextGetter() {
 }
 
 void URLRequestContextGetter::NotifyContextShuttingDown(
-    std::unique_ptr<ResourceContext> resource_context) {
+    std::unique_ptr<content::ResourceContext> resource_context) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  // todo(brenca): remove once C70 lands
+  if (url_request_context_ && url_request_context_->cookie_store()) {
+    url_request_context_->cookie_store()->FlushStore(base::NullCallback());
+  }
 
   context_shutting_down_ = true;
   resource_context.reset();
@@ -273,6 +261,10 @@ net::URLRequestContext* URLRequestContextGetter::GetURLRequestContext() {
   if (!url_request_context_) {
     std::unique_ptr<network::URLRequestContextBuilderMojo> builder =
         std::make_unique<network::URLRequestContextBuilderMojo>();
+
+    // Enable file:// support.
+    builder->set_file_enabled(true);
+
     auto network_delegate = std::make_unique<AtomNetworkDelegate>();
     network_delegate_ = network_delegate.get();
     builder->set_network_delegate(std::move(network_delegate));
@@ -323,8 +315,6 @@ net::URLRequestContext* URLRequestContextGetter::GetURLRequestContext() {
     }
     top_job_factory_->Chain(std::move(inner_job_factory));
     url_request_context_->set_job_factory(top_job_factory_.get());
-
-    context_handle_->resource_context_->request_context_ = url_request_context_;
   }
 
   return url_request_context_;
@@ -332,7 +322,7 @@ net::URLRequestContext* URLRequestContextGetter::GetURLRequestContext() {
 
 scoped_refptr<base::SingleThreadTaskRunner>
 URLRequestContextGetter::GetNetworkTaskRunner() const {
-  return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
+  return base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO});
 }
 
 }  // namespace atom

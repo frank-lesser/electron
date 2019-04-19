@@ -10,15 +10,13 @@
 #include "atom/common/native_mate_converters/gfx_converter.h"
 #include "atom/common/native_mate_converters/image_converter.h"
 #include "atom/common/native_mate_converters/string16_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/guid.h"
 #include "base/strings/utf_string_conversions.h"
 #include "native_mate/constructor.h"
 #include "native_mate/dictionary.h"
 #include "native_mate/object_template_builder.h"
 #include "url/gurl.h"
-// Must be the last in the includes list.
-// See https://github.com/electron/electron/issues/10363
-#include "atom/common/node_includes.h"
 
 namespace mate {
 template <>
@@ -263,12 +261,13 @@ void Initialize(v8::Local<v8::Object> exports,
   Notification::SetConstructor(isolate, base::Bind(&Notification::New));
 
   mate::Dictionary dict(isolate, exports);
-  dict.Set("Notification",
-           Notification::GetConstructor(isolate)->GetFunction());
+  dict.Set("Notification", Notification::GetConstructor(isolate)
+                               ->GetFunction(context)
+                               .ToLocalChecked());
 
   dict.SetMethod("isSupported", &Notification::IsSupported);
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_common_notification, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_common_notification, Initialize)

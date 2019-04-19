@@ -13,43 +13,6 @@
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/gfx/image/image_skia.h"
 
-@interface ModalDelegate : NSObject {
- @private
-  atom::MessageBoxCallback callback_;
-  NSAlert* alert_;
-  bool callEndModal_;
-}
-- (id)initWithCallback:(const atom::MessageBoxCallback&)callback
-              andAlert:(NSAlert*)alert
-          callEndModal:(bool)flag;
-@end
-
-@implementation ModalDelegate
-
-- (id)initWithCallback:(const atom::MessageBoxCallback&)callback
-              andAlert:(NSAlert*)alert
-          callEndModal:(bool)flag {
-  if ((self = [super init])) {
-    callback_ = callback;
-    alert_ = alert;
-    callEndModal_ = flag;
-  }
-  return self;
-}
-
-- (void)alertDidEnd:(NSAlert*)alert
-         returnCode:(NSInteger)returnCode
-        contextInfo:(void*)contextInfo {
-  callback_.Run(returnCode, alert.suppressionButton.state == NSOnState);
-  [alert_ release];
-  [self release];
-
-  if (callEndModal_)
-    [NSApp stopModal];
-}
-
-@end
-
 namespace atom {
 
 namespace {
@@ -125,22 +88,18 @@ NSAlert* CreateNSAlert(NativeWindow* parent_window,
   return alert;
 }
 
-void SetReturnCode(int* ret_code, int result, bool checkbox_checked) {
-  *ret_code = result;
-}
-
 }  // namespace
 
-int ShowMessageBox(NativeWindow* parent_window,
-                   MessageBoxType type,
-                   const std::vector<std::string>& buttons,
-                   int default_id,
-                   int cancel_id,
-                   int options,
-                   const std::string& title,
-                   const std::string& message,
-                   const std::string& detail,
-                   const gfx::ImageSkia& icon) {
+int ShowMessageBoxSync(NativeWindow* parent_window,
+                       MessageBoxType type,
+                       const std::vector<std::string>& buttons,
+                       int default_id,
+                       int cancel_id,
+                       int options,
+                       const std::string& title,
+                       const std::string& message,
+                       const std::string& detail,
+                       const gfx::ImageSkia& icon) {
   NSAlert* alert =
       CreateNSAlert(parent_window, type, buttons, default_id, cancel_id, title,
                     message, detail, "", false, icon);
@@ -150,17 +109,14 @@ int ShowMessageBox(NativeWindow* parent_window,
   if (!parent_window)
     return [[alert autorelease] runModal];
 
-  int ret_code = -1;
-  ModalDelegate* delegate = [[ModalDelegate alloc]
-      initWithCallback:base::Bind(&SetReturnCode, &ret_code)
-              andAlert:alert
-          callEndModal:true];
+  __block int ret_code = -1;
 
-  NSWindow* window = parent_window->GetNativeWindow();
+  NSWindow* window = parent_window->GetNativeWindow().GetNativeNSWindow();
   [alert beginSheetModalForWindow:window
-                    modalDelegate:delegate
-                   didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:)
-                      contextInfo:nil];
+                completionHandler:^(NSModalResponse response) {
+                  ret_code = response;
+                  [NSApp stopModal];
+                }];
 
   [NSApp runModalForWindow:window];
   return ret_code;
@@ -178,7 +134,7 @@ void ShowMessageBox(NativeWindow* parent_window,
                     const std::string& checkbox_label,
                     bool checkbox_checked,
                     const gfx::ImageSkia& icon,
-                    const MessageBoxCallback& callback) {
+                    MessageBoxCallback callback) {
   NSAlert* alert =
       CreateNSAlert(parent_window, type, buttons, default_id, cancel_id, title,
                     message, detail, checkbox_label, checkbox_checked, icon);
@@ -187,18 +143,21 @@ void ShowMessageBox(NativeWindow* parent_window,
   // window to wait for.
   if (!parent_window) {
     int ret = [[alert autorelease] runModal];
-    callback.Run(ret, alert.suppressionButton.state == NSOnState);
+    std::move(callback).Run(ret, alert.suppressionButton.state == NSOnState);
   } else {
-    ModalDelegate* delegate = [[ModalDelegate alloc] initWithCallback:callback
-                                                             andAlert:alert
-                                                         callEndModal:false];
+    NSWindow* window =
+        parent_window ? parent_window->GetNativeWindow().GetNativeNSWindow()
+                      : nil;
 
-    NSWindow* window = parent_window ? parent_window->GetNativeWindow() : nil;
-    [alert
-        beginSheetModalForWindow:window
-                   modalDelegate:delegate
-                  didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:)
-                     contextInfo:nil];
+    // Duplicate the callback object here since c is a reference and gcd would
+    // only store the pointer, by duplication we can force gcd to store a copy.
+    __block MessageBoxCallback callback_ = std::move(callback);
+
+    [alert beginSheetModalForWindow:window
+                  completionHandler:^(NSModalResponse response) {
+                    std::move(callback_).Run(
+                        response, alert.suppressionButton.state == NSOnState);
+                  }];
   }
 }
 

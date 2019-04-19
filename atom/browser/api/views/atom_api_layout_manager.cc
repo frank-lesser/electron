@@ -5,9 +5,8 @@
 #include "atom/browser/api/views/atom_api_layout_manager.h"
 
 #include "atom/common/api/constructor.h"
-#include "native_mate/dictionary.h"
-
 #include "atom/common/node_includes.h"
+#include "native_mate/dictionary.h"
 
 namespace atom {
 
@@ -60,4 +59,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_layout_manager, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_layout_manager, Initialize)

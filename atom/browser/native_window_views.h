@@ -40,7 +40,8 @@ class NativeWindowViews : public NativeWindow,
 #if defined(OS_WIN)
                           public MessageHandlerDelegate,
 #endif
-                          public views::WidgetObserver {
+                          public views::WidgetObserver,
+                          public ui::EventHandler {
  public:
   NativeWindowViews(const mate::Dictionary& options, NativeWindow* parent);
   ~NativeWindowViews() override;
@@ -73,9 +74,7 @@ class NativeWindowViews : public NativeWindow,
   void SetContentSizeConstraints(
       const extensions::SizeConstraints& size_constraints) override;
   void SetResizable(bool resizable) override;
-#if defined(OS_WIN)
   void MoveTop() override;
-#endif
   bool IsResizable() override;
   void SetMovable(bool movable) override;
   bool IsMovable() override;
@@ -98,6 +97,8 @@ class NativeWindowViews : public NativeWindow,
   std::string GetTitle() override;
   void FlashFrame(bool flash) override;
   void SetSkipTaskbar(bool skip) override;
+  void SetExcludedFromShownWindowsMenu(bool excluded) override;
+  bool IsExcludedFromShownWindowsMenu() override;
   void SetSimpleFullScreen(bool simple_fullscreen) override;
   bool IsSimpleFullScreen() override;
   void SetKiosk(bool kiosk) override;
@@ -111,7 +112,8 @@ class NativeWindowViews : public NativeWindow,
   void SetContentProtection(bool enable) override;
   void SetFocusable(bool focusable) override;
   void SetMenu(AtomMenuModel* menu_model) override;
-  void SetBrowserView(NativeBrowserView* browser_view) override;
+  void AddBrowserView(NativeBrowserView* browser_view) override;
+  void RemoveBrowserView(NativeBrowserView* browser_view) override;
   void SetParentWindow(NativeWindow* parent) override;
   gfx::NativeView GetNativeView() const override;
   gfx::NativeWindow GetNativeWindow() const override;
@@ -129,7 +131,7 @@ class NativeWindowViews : public NativeWindow,
   bool IsVisibleOnAllWorkspaces() override;
 
   gfx::AcceleratedWidget GetAcceleratedWidget() const override;
-  std::tuple<void*, int> GetNativeWindowHandlePointer() const override;
+  NativeWindowHandle GetNativeWindowHandle() const override;
 
   gfx::Rect ContentBoundsToWindowBounds(const gfx::Rect& bounds) const override;
   gfx::Rect WindowBoundsToContentBounds(const gfx::Rect& bounds) const override;
@@ -156,6 +158,7 @@ class NativeWindowViews : public NativeWindow,
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& bounds) override;
+  void OnWidgetDestroying(views::Widget* widget) override;
 
   // views::WidgetDelegate:
   void DeleteDelegate() override;
@@ -204,6 +207,11 @@ class NativeWindowViews : public NativeWindow,
       content::WebContents*,
       const content::NativeWebKeyboardEvent& event) override;
 
+#if defined(OS_LINUX)
+  // ui::EventHandler:
+  void OnMouseEvent(ui::MouseEvent* event) override;
+#endif
+
   // Returns the restore state for the window.
   ui::WindowShowState GetRestoredState();
 
@@ -233,6 +241,8 @@ class NativeWindowViews : public NativeWindow,
   AtomDesktopWindowTreeHostWin* atom_desktop_window_tree_host_win_;
 
   ui::WindowShowState last_window_state_;
+
+  gfx::Rect last_normal_placement_bounds_;
 
   // There's an issue with restore on Windows, that sometimes causes the Window
   // to receive the wrong size (#2498). To circumvent that, we keep tabs on the

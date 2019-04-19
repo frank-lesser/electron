@@ -18,7 +18,7 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "electron/buildflags/buildflags.h"
 
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS)
 #include "atom/browser/ui/autofill_popup.h"
 #endif
 
@@ -33,7 +33,7 @@ class NativeWindow;
 class WebDialogHelper;
 
 #if BUILDFLAG(ENABLE_OSR)
-class OffScreenRenderWidgetHostView;
+class OffScreenWebContentsView;
 #endif
 
 class CommonWebContentsDelegate : public content::WebContentsDelegate,
@@ -70,8 +70,7 @@ class CommonWebContentsDelegate : public content::WebContentsDelegate,
 
  protected:
 #if BUILDFLAG(ENABLE_OSR)
-  virtual OffScreenRenderWidgetHostView* GetOffScreenRenderWidgetHostView()
-      const;
+  virtual OffScreenWebContentsView* GetOffScreenWebContentsView() const;
 #endif
 
   // content::WebContentsDelegate:
@@ -85,9 +84,10 @@ class CommonWebContentsDelegate : public content::WebContentsDelegate,
       const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
       override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
-                      const content::FileChooserParams& params) override;
+                      std::unique_ptr<content::FileSelectListener> listener,
+                      const blink::mojom::FileChooserParams& params) override;
   void EnumerateDirectory(content::WebContents* web_contents,
-                          int request_id,
+                          std::unique_ptr<content::FileSelectListener> listener,
                           const base::FilePath& path) override;
   void EnterFullscreenModeForTab(
       content::WebContents* source,
@@ -99,12 +99,13 @@ class CommonWebContentsDelegate : public content::WebContentsDelegate,
   blink::WebSecurityStyle GetSecurityStyle(
       content::WebContents* web_contents,
       content::SecurityStyleExplanations* explanations) override;
-  void HandleKeyboardEvent(
+  bool TakeFocus(content::WebContents* source, bool reverse) override;
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
 
   // Autofill related events.
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS)
   void ShowAutofillPopup(content::RenderFrameHost* frame_host,
                          content::RenderFrameHost* embedder_frame_host,
                          bool offscreen,
@@ -174,7 +175,7 @@ class CommonWebContentsDelegate : public content::WebContentsDelegate,
   bool native_fullscreen_ = false;
 
   // UI related helper classes.
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS)
   std::unique_ptr<AutofillPopup> autofill_popup_;
 #endif
   std::unique_ptr<WebDialogHelper> web_dialog_helper_;

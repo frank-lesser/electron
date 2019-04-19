@@ -30,8 +30,6 @@
 #include "ui/gfx/switches.h"
 #endif
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(atom::WebContentsPreferences);
-
 namespace {
 
 bool GetAsString(const base::Value* val,
@@ -75,6 +73,26 @@ bool GetAsInteger(const base::Value* val,
   return false;
 }
 
+bool GetAsAutoplayPolicy(const base::Value* val,
+                         const base::StringPiece& path,
+                         content::AutoplayPolicy* out) {
+  std::string policy_str;
+  if (GetAsString(val, path, &policy_str)) {
+    if (policy_str == "no-user-gesture-required") {
+      *out = content::AutoplayPolicy::kNoUserGestureRequired;
+      return true;
+    } else if (policy_str == "user-gesture-required") {
+      *out = content::AutoplayPolicy::kUserGestureRequired;
+      return true;
+    } else if (policy_str == "document-user-activation-required") {
+      *out = content::AutoplayPolicy::kDocumentUserActivationRequired;
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 }  // namespace
 
 namespace atom {
@@ -101,11 +119,14 @@ WebContentsPreferences::WebContentsPreferences(
   // Set WebPreferences defaults onto the JS object
   SetDefaultBoolIfUndefined(options::kPlugins, false);
   SetDefaultBoolIfUndefined(options::kExperimentalFeatures, false);
-  bool node = SetDefaultBoolIfUndefined(options::kNodeIntegration, true);
+  SetDefaultBoolIfUndefined(options::kNodeIntegration, false);
+  SetDefaultBoolIfUndefined(options::kNodeIntegrationInSubFrames, false);
   SetDefaultBoolIfUndefined(options::kNodeIntegrationInWorker, false);
-  SetDefaultBoolIfUndefined(options::kWebviewTag, node);
+  SetDefaultBoolIfUndefined(options::kDisableHtmlFullscreenWindowResize, false);
+  SetDefaultBoolIfUndefined(options::kWebviewTag, false);
   SetDefaultBoolIfUndefined(options::kSandbox, false);
   SetDefaultBoolIfUndefined(options::kNativeWindowOpen, false);
+  SetDefaultBoolIfUndefined(options::kEnableRemoteModule, true);
   SetDefaultBoolIfUndefined(options::kContextIsolation, false);
   SetDefaultBoolIfUndefined("javascript", true);
   SetDefaultBoolIfUndefined("images", true);
@@ -230,27 +251,26 @@ void WebContentsPreferences::AppendCommandLineSwitches(
         ::switches::kEnableExperimentalWebPlatformFeatures);
 
   // Check if we have node integration specified.
-  bool enable_node_integration = IsEnabled(options::kNodeIntegration, true);
-  command_line->AppendSwitchASCII(switches::kNodeIntegration,
-                                  enable_node_integration ? "true" : "false");
+  if (IsEnabled(options::kNodeIntegration))
+    command_line->AppendSwitch(switches::kNodeIntegration);
 
   // Whether to enable node integration in Worker.
   if (IsEnabled(options::kNodeIntegrationInWorker))
     command_line->AppendSwitch(switches::kNodeIntegrationInWorker);
 
   // Check if webview tag creation is enabled, default to nodeIntegration value.
-  // TODO(kevinsawicki): Default to false in 2.0
-  bool webview_tag = IsEnabled(options::kWebviewTag, enable_node_integration);
-  command_line->AppendSwitchASCII(switches::kWebviewTag,
-                                  webview_tag ? "true" : "false");
+  if (IsEnabled(options::kWebviewTag))
+    command_line->AppendSwitch(switches::kWebviewTag);
 
   // If the `sandbox` option was passed to the BrowserWindow's webPreferences,
   // pass `--enable-sandbox` to the renderer so it won't have any node.js
   // integration.
-  if (IsEnabled(options::kSandbox))
+  if (IsEnabled(options::kSandbox)) {
     command_line->AppendSwitch(switches::kEnableSandbox);
-  else if (!command_line->HasSwitch(switches::kEnableSandbox))
+  } else if (!command_line->HasSwitch(switches::kEnableSandbox)) {
     command_line->AppendSwitch(service_manager::switches::kNoSandbox);
+    command_line->AppendSwitch(::switches::kNoZygote);
+  }
 
   // Check if nativeWindowOpen is enabled.
   if (IsEnabled(options::kNativeWindowOpen))
@@ -349,6 +369,12 @@ void WebContentsPreferences::AppendCommandLineSwitches(
     }
   }
 
+  if (IsEnabled(options::kNodeIntegrationInSubFrames))
+    command_line->AppendSwitch(switches::kNodeIntegrationInSubFrames);
+
+  if (IsEnabled(options::kDisableHtmlFullscreenWindowResize))
+    command_line->AppendSwitch(switches::kDisableHtmlFullscreenWindowResize);
+
   // We are appending args to a webContents so let's save the current state
   // of our preferences object so that during the lifetime of the WebContents
   // we can fetch the options used to initally configure the WebContents
@@ -363,6 +389,10 @@ void WebContentsPreferences::OverrideWebkitPrefs(
       IsEnabled("textAreasAreResizable", true /* default_value */);
   prefs->navigate_on_drag_drop =
       IsEnabled("navigateOnDragDrop", false /* default_value */);
+  if (!GetAsAutoplayPolicy(&preference_, "autoplayPolicy",
+                           &prefs->autoplay_policy)) {
+    prefs->autoplay_policy = content::AutoplayPolicy::kNoUserGestureRequired;
+  }
 
   // Check if webgl should be enabled.
   bool is_webgl_enabled = IsEnabled("webgl", true /* default_value */);
@@ -406,5 +436,7 @@ void WebContentsPreferences::OverrideWebkitPrefs(
   if (GetAsString(&preference_, "defaultEncoding", &encoding))
     prefs->default_encoding = encoding;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsPreferences)
 
 }  // namespace atom

@@ -23,8 +23,7 @@ SubmenuButton::SubmenuButton(const base::string16& title,
                              views::MenuButtonListener* menu_button_listener,
                              const SkColor& background_color)
     : views::MenuButton(gfx::RemoveAcceleratorChar(title, '&', NULL, NULL),
-                        menu_button_listener,
-                        false),
+                        menu_button_listener),
       background_color_(background_color) {
 #if defined(OS_LINUX)
   // Dont' use native style border.
@@ -38,7 +37,7 @@ SubmenuButton::SubmenuButton(const base::string16& title,
 
   SetInkDropMode(InkDropMode::ON);
   set_ink_drop_base_color(
-      color_utils::BlendTowardOppositeLuma(background_color_, 0x61));
+      color_utils::BlendTowardMaxContrast(background_color_, 0x81));
 }
 
 SubmenuButton::~SubmenuButton() {}
@@ -56,6 +55,7 @@ std::unique_ptr<views::InkDrop> SubmenuButton::CreateInkDrop() {
   std::unique_ptr<views::InkDropImpl> ink_drop =
       views::Button::CreateDefaultInkDropImpl();
   ink_drop->SetShowHighlightOnHover(false);
+  ink_drop->SetShowHighlightOnFocus(true);
   return std::move(ink_drop);
 }
 
@@ -72,7 +72,7 @@ void SubmenuButton::SetUnderlineColor(SkColor color) {
 }
 
 void SubmenuButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->SetName(accessible_name());
+  node_data->SetName(GetAccessibleName());
   node_data->role = ax::mojom::Role::kPopUpButton;
 }
 

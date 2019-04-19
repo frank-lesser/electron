@@ -41,19 +41,23 @@ static_library("chrome") {
     "//chrome/browser/net/proxy_service_factory.h",
     "//chrome/browser/ssl/security_state_tab_helper.cc",
     "//chrome/browser/ssl/security_state_tab_helper.h",
+    "//chrome/browser/ui/autofill/popup_view_common.cc",
+    "//chrome/browser/ui/autofill/popup_view_common.h",
     "//chrome/browser/win/chrome_process_finder.cc",
     "//chrome/browser/win/chrome_process_finder.h",
     "//extensions/browser/app_window/size_constraints.cc",
     "//extensions/browser/app_window/size_constraints.h",
   ]
   public_deps = [
-    "//content/public/browser",
-  ]
-  deps = [
     "//chrome/common",
+    "//chrome/common:version_header",
     "//components/keyed_service/content",
     "//components/proxy_config",
     "//components/security_state/content",
+    "//content/public/browser",
+  ]
+  deps = [
+    "//components/feature_engagement:buildflags",
   ]
 
   if (is_linux) {
@@ -72,6 +76,7 @@ static_library("chrome") {
       "//chrome/browser/media/webrtc/desktop_media_list_observer.h",
       "//chrome/browser/media/webrtc/native_desktop_media_list.cc",
       "//chrome/browser/media/webrtc/native_desktop_media_list.h",
+      "//chrome/browser/media/webrtc/window_icon_util.h",
     ]
     deps += [ "//ui/snapshot" ]
   }
@@ -81,6 +86,7 @@ static_library("chrome") {
       "//chrome/browser/platform_util.cc",
       "//chrome/browser/platform_util.h",
       "//chrome/browser/ui/browser_dialogs.h",
+      "//chrome/browser/ui/color_chooser.h",
     ]
 
     if (use_aura) {
@@ -89,10 +95,12 @@ static_library("chrome") {
         "//chrome/browser/ui/views/color_chooser_aura.cc",
         "//chrome/browser/ui/views/color_chooser_aura.h",
       ]
+      deps += [ "//components/feature_engagement" ]
     }
 
     if (is_mac) {
       sources += [
+        "//chrome/browser/media/webrtc/window_icon_util_mac.mm",
         "//chrome/browser/ui/cocoa/color_chooser_mac.h",
         "//chrome/browser/ui/cocoa/color_chooser_mac.mm",
       ]
@@ -100,35 +108,27 @@ static_library("chrome") {
 
     if (is_win) {
       sources += [
+        "//chrome/browser/media/webrtc/window_icon_util_win.cc",
         "//chrome/browser/ui/views/color_chooser_dialog.cc",
         "//chrome/browser/ui/views/color_chooser_dialog.h",
         "//chrome/browser/ui/views/color_chooser_win.cc",
       ]
     }
+
+    if (is_linux) {
+      sources += [ "//chrome/browser/media/webrtc/window_icon_util_x11.cc" ]
+    }
   }
 
   if (enable_tts) {
     sources += [
-      "//chrome/browser/speech/tts_controller.h",
-      "//chrome/browser/speech/tts_controller_impl.cc",
-      "//chrome/browser/speech/tts_controller_impl.h",
-      "//chrome/browser/speech/tts_mac.mm",
+      "//chrome/browser/speech/tts_controller_delegate_impl.cc",
+      "//chrome/browser/speech/tts_controller_delegate_impl.h",
       "//chrome/browser/speech/tts_message_filter.cc",
       "//chrome/browser/speech/tts_message_filter.h",
-      "//chrome/browser/speech/tts_platform.cc",
-      "//chrome/browser/speech/tts_platform.h",
-      "//chrome/browser/speech/tts_win.cc",
-      "//chrome/common/tts_messages.h",
-      "//chrome/common/tts_utterance_request.cc",
-      "//chrome/common/tts_utterance_request.h",
       "//chrome/renderer/tts_dispatcher.cc",
       "//chrome/renderer/tts_dispatcher.h",
     ]
-
-    if (is_linux) {
-      sources += [ "//chrome/browser/speech/tts_linux.cc" ]
-      deps += [ "//third_party/speech-dispatcher" ]
-    }
   }
 
   if (enable_widevine) {
@@ -158,14 +158,16 @@ static_library("chrome") {
       "//chrome/browser/printing/printing_message_filter.cc",
       "//chrome/browser/printing/printing_message_filter.h",
     ]
-    deps += [
+    public_deps += [
       "//chrome/services/printing:lib",
       "//components/printing/browser",
-      "//components/printing/common",
       "//components/printing/renderer",
-      "//components/services/pdf_compositor",
       "//components/services/pdf_compositor/public/cpp:factory",
       "//components/services/pdf_compositor/public/interfaces",
+    ]
+    deps += [
+      "//components/printing/common",
+      "//components/services/pdf_compositor",
       "//printing",
     ]
 

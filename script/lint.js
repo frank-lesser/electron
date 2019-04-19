@@ -29,8 +29,10 @@ const BLACKLIST = new Set([
   ['atom', 'common', 'common_message_generator.cc'],
   ['atom', 'common', 'common_message_generator.h'],
   ['atom', 'common', 'node_includes.h'],
-  ['atom', 'node', 'osfhandle.cc'],
-  ['spec', 'static', 'jquery-2.0.3.min.js']
+  ['spec', 'static', 'jquery-2.0.3.min.js'],
+  ['spec', 'ts-smoke', 'electron', 'main.ts'],
+  ['spec', 'ts-smoke', 'electron', 'renderer.ts'],
+  ['spec', 'ts-smoke', 'runner.js']
 ].map(tokens => path.join(SOURCE_ROOT, ...tokens)))
 
 function spawnAndCheckExitCode (cmd, args, opts) {
@@ -76,10 +78,10 @@ const LINTERS = [ {
   key: 'javascript',
   roots: ['lib', 'spec', 'script', 'default_app'],
   ignoreRoots: ['spec/node_modules'],
-  test: filename => filename.endsWith('.js'),
+  test: filename => filename.endsWith('.js') || filename.endsWith('.ts'),
   run: (opts, filenames) => {
     const cmd = path.join(SOURCE_ROOT, 'node_modules', '.bin', 'eslint')
-    const args = [ '--cache', ...filenames ]
+    const args = [ '--cache', '--ext', '.js,.ts', ...filenames ]
     if (opts.fix) args.unshift('--fix')
     spawnAndCheckExitCode(cmd, args, { cwd: SOURCE_ROOT })
   }
@@ -117,12 +119,12 @@ const LINTERS = [ {
 function parseCommandLine () {
   let help
   const opts = minimist(process.argv.slice(2), {
-    boolean: [ 'c++', 'javascript', 'python', 'gn', 'help', 'changed', 'fix', 'verbose' ],
+    boolean: [ 'c++', 'javascript', 'python', 'gn', 'help', 'changed', 'fix', 'verbose', 'only' ],
     alias: { 'c++': ['cc', 'cpp', 'cxx'], javascript: ['js', 'es'], python: 'py', changed: 'c', help: 'h', verbose: 'v' },
     unknown: arg => { help = true }
   })
   if (help || opts.help) {
-    console.log('Usage: script/lint.js [--cc] [--js] [--py] [-c|--changed] [-h|--help] [-v|--verbose] [--fix]')
+    console.log('Usage: script/lint.js [--cc] [--js] [--py] [-c|--changed] [-h|--help] [-v|--verbose] [--fix] [--only -- file1 file2]')
     process.exit(0)
   }
   return opts
@@ -162,6 +164,8 @@ async function findFiles (args, linter) {
     if (!whitelist.size) {
       return []
     }
+  } else if (args.only) {
+    whitelist = new Set(args._)
   }
 
   // accumulate the raw list of files

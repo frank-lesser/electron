@@ -25,9 +25,6 @@
 
 namespace atom {
 
-// Null until/unless the default main message loop is running.
-base::NoDestructor<base::OnceClosure> g_quit_main_message_loop;
-
 Browser::LoginItemSettings::LoginItemSettings() = default;
 Browser::LoginItemSettings::~LoginItemSettings() = default;
 Browser::LoginItemSettings::LoginItemSettings(const LoginItemSettings& other) =
@@ -95,11 +92,12 @@ void Browser::Shutdown() {
   for (BrowserObserver& observer : observers_)
     observer.OnQuit();
 
-  if (*g_quit_main_message_loop) {
-    std::move(*g_quit_main_message_loop).Run();
+  if (quit_main_message_loop_) {
+    std::move(quit_main_message_loop_).Run();
   } else {
-    // There is no message loop available so we are in early stage.
-    exit(0);
+    // There is no message loop available so we are in early stage, wait until
+    // the quit_main_message_loop_ is available.
+    // Exiting now would leave defunct processes behind.
   }
 }
 
@@ -167,14 +165,14 @@ void Browser::DidFinishLaunching(const base::DictionaryValue& launch_info) {
     observer.OnFinishLaunching(launch_info);
 }
 
-util::Promise* Browser::WhenReady(v8::Isolate* isolate) {
+const util::Promise& Browser::WhenReady(v8::Isolate* isolate) {
   if (!ready_promise_) {
-    ready_promise_ = new util::Promise(isolate);
+    ready_promise_.reset(new util::Promise(isolate));
     if (is_ready()) {
       ready_promise_->Resolve();
     }
   }
-  return ready_promise_;
+  return *ready_promise_;
 }
 
 void Browser::OnAccessibilitySupportChanged() {
@@ -196,7 +194,10 @@ void Browser::PreMainMessageLoopRun() {
 }
 
 void Browser::SetMainMessageLoopQuitClosure(base::OnceClosure quit_closure) {
-  *g_quit_main_message_loop = std::move(quit_closure);
+  if (is_shutdown_)
+    std::move(quit_closure).Run();
+  else
+    quit_main_message_loop_ = std::move(quit_closure);
 }
 
 void Browser::NotifyAndShutdown() {

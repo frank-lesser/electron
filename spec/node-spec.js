@@ -6,6 +6,7 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const { ipcRenderer, remote } = require('electron')
+const features = process.electronBinding('features')
 
 const isCI = remote.getGlobal('isCi')
 chai.use(dirtyChai)
@@ -14,6 +15,12 @@ describe('node feature', () => {
   const fixtures = path.join(__dirname, 'fixtures')
 
   describe('child_process', () => {
+    beforeEach(function () {
+      if (!features.isRunAsNodeEnabled()) {
+        this.skip()
+      }
+    })
+
     describe('child_process.fork', () => {
       it('works in current process', (done) => {
         const child = ChildProcess.fork(path.join(fixtures, 'module', 'ping.js'))
@@ -104,6 +111,18 @@ describe('node feature', () => {
         })
         forked.send('hello')
       })
+
+      it('has the electron version in process.versions', (done) => {
+        const source = 'process.send(process.versions)'
+        const forked = ChildProcess.fork('--eval', [source])
+        forked.on('message', (message) => {
+          expect(message)
+            .to.have.own.property('electron')
+            .that.is.a('string')
+            .and.matches(/^\d+\.\d+\.\d+(\S*)?$/)
+          done()
+        })
+      })
     })
 
     describe('child_process.spawn', () => {
@@ -151,10 +170,15 @@ describe('node feature', () => {
         const listeners = process.listeners('uncaughtException')
         process.removeAllListeners('uncaughtException')
         process.on('uncaughtException', (thrown) => {
-          expect(thrown).to.equal(error)
-          process.removeAllListeners('uncaughtException')
-          listeners.forEach((listener) => process.on('uncaughtException', listener))
-          done()
+          try {
+            expect(thrown).to.equal(error)
+            done()
+          } catch (e) {
+            done(e)
+          } finally {
+            process.removeAllListeners('uncaughtException')
+            listeners.forEach((listener) => process.on('uncaughtException', listener))
+          }
         })
         fs.readFile(__filename, () => {
           throw error
@@ -208,6 +232,12 @@ describe('node feature', () => {
   describe('inspector', () => {
     let child = null
 
+    beforeEach(function () {
+      if (!features.isRunAsNodeEnabled()) {
+        this.skip()
+      }
+    })
+
     afterEach(() => {
       if (child !== null) child.kill()
     })
@@ -227,6 +257,34 @@ describe('node feature', () => {
       function errorDataListener (data) {
         output += data
         if (output.trim().startsWith('Debugger listening on ws://')) {
+          cleanup()
+          done()
+        }
+      }
+      function outDataHandler (data) {
+        cleanup()
+        done(new Error(`Unexpected output: ${data.toString()}`))
+      }
+      child.stderr.on('data', errorDataListener)
+      child.stdout.on('data', outDataHandler)
+    })
+
+    it('supports starting the v8 inspector with --inspect and a provided port', (done) => {
+      child = ChildProcess.spawn(process.execPath, ['--inspect=17364', path.join(__dirname, 'fixtures', 'module', 'run-as-node.js')], {
+        env: {
+          ELECTRON_RUN_AS_NODE: true
+        }
+      })
+
+      let output = ''
+      function cleanup () {
+        child.stderr.removeListener('data', errorDataListener)
+        child.stdout.removeListener('data', outDataHandler)
+      }
+      function errorDataListener (data) {
+        output += data
+        if (output.trim().startsWith('Debugger listening on ws://')) {
+          expect(output.trim()).to.contain(':17364', 'should be listening on port 17364')
           cleanup()
           done()
         }
@@ -265,10 +323,9 @@ describe('node feature', () => {
         stdio: ['ipc']
       })
 
-      child.on('message', ({ cmd, debuggerEnabled, secondSessionOpened, success }) => {
+      child.on('message', ({ cmd, debuggerEnabled, success }) => {
         if (cmd === 'assert') {
           expect(debuggerEnabled).to.be.true()
-          expect(secondSessionOpened).to.be.true()
           expect(success).to.be.true()
           done()
         }
@@ -300,7 +357,7 @@ describe('node feature', () => {
 
   describe('net.connect', () => {
     before(function () {
-      if (process.platform !== 'darwin') {
+      if (!features.isRunAsNodeEnabled() || process.platform !== 'darwin') {
         this.skip()
       }
     })
@@ -408,6 +465,62 @@ describe('node feature', () => {
   describe('vm.runInNewContext', () => {
     it('should not crash', () => {
       require('vm').runInNewContext('')
+    })
+  })
+
+  describe('crypto', () => {
+    it('should list the ripemd160 hash in getHashes', () => {
+      expect(require('crypto').getHashes()).to.include('ripemd160')
+    })
+
+    it('should be able to create a ripemd160 hash and use it', () => {
+      const hash = require('crypto').createHash('ripemd160')
+      hash.update('electron-ripemd160')
+      expect(hash.digest('hex')).to.equal('fa7fec13c624009ab126ebb99eda6525583395fe')
+    })
+
+    it('should list aes-{128,256}-cfb in getCiphers', () => {
+      expect(require('crypto').getCiphers()).to.include.members(['aes-128-cfb', 'aes-256-cfb'])
+    })
+
+    it('should be able to create an aes-128-cfb cipher', () => {
+      require('crypto').createCipheriv('aes-128-cfb', '0123456789abcdef', '0123456789abcdef')
+    })
+
+    it('should be able to create an aes-256-cfb cipher', () => {
+      require('crypto').createCipheriv('aes-256-cfb', '0123456789abcdef0123456789abcdef', '0123456789abcdef')
+    })
+
+    it('should list des-ede-cbc in getCiphers', () => {
+      expect(require('crypto').getCiphers()).to.include('des-ede-cbc')
+    })
+
+    it('should be able to create an des-ede-cbc cipher', () => {
+      const key = Buffer.from('0123456789abcdeff1e0d3c2b5a49786', 'hex')
+      const iv = Buffer.from('fedcba9876543210', 'hex')
+      require('crypto').createCipheriv('des-ede-cbc', key, iv)
+    })
+
+    it('should not crash when getting an ECDH key', () => {
+      const ecdh = require('crypto').createECDH('prime256v1')
+      expect(ecdh.generateKeys()).to.be.an.instanceof(Buffer)
+      expect(ecdh.getPrivateKey()).to.be.an.instanceof(Buffer)
+    })
+
+    it('should not crash when generating DH keys or fetching DH fields', () => {
+      const dh = require('crypto').createDiffieHellman('modp15')
+      expect(dh.generateKeys()).to.be.an.instanceof(Buffer)
+      expect(dh.getPublicKey()).to.be.an.instanceof(Buffer)
+      expect(dh.getPrivateKey()).to.be.an.instanceof(Buffer)
+      expect(dh.getPrime()).to.be.an.instanceof(Buffer)
+      expect(dh.getGenerator()).to.be.an.instanceof(Buffer)
+    })
+
+    it('should not crash when creating an ECDH cipher', () => {
+      const crypto = require('crypto')
+      const dh = crypto.createECDH('prime256v1')
+      dh.generateKeys()
+      dh.setPrivateKey(dh.getPrivateKey())
     })
   })
 

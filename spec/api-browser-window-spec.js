@@ -10,11 +10,10 @@ const qs = require('querystring')
 const http = require('http')
 const { closeWindow } = require('./window-helpers')
 const { emittedOnce } = require('./events-helpers')
-const { resolveGetters } = require('./assert-helpers')
-const { ipcRenderer, remote, screen } = require('electron')
-const { app, ipcMain, BrowserWindow, BrowserView, protocol, session, webContents } = remote
+const { ipcRenderer, remote } = require('electron')
+const { app, ipcMain, BrowserWindow, BrowserView, protocol, session, screen, webContents } = remote
 
-const features = process.atomBinding('features')
+const features = process.electronBinding('features')
 const { expect } = chai
 const isCI = remote.getGlobal('isCi')
 const nativeModulesEnabled = remote.getGlobal('nativeModulesEnabled')
@@ -34,7 +33,8 @@ describe('BrowserWindow module', () => {
     width: 400,
     height: 400,
     webPreferences: {
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      nodeIntegration: true
     }
   }
 
@@ -90,6 +90,8 @@ describe('BrowserWindow module', () => {
           res.end()
         } else if (req.url === '/navigate-302') {
           res.end(`<html><body><script>window.location='${server.url}/302'</script></body></html>`)
+        } else if (req.url === '/cross-site') {
+          res.end(`<html><body><h1>${req.url}</h1></body></html>`)
         } else {
           res.end()
         }
@@ -112,8 +114,8 @@ describe('BrowserWindow module', () => {
   afterEach(closeTheWindow)
 
   describe('BrowserWindow constructor', () => {
-    it('allows passing void 0 as the webContents', () => {
-      openTheWindow({
+    it('allows passing void 0 as the webContents', async () => {
+      await openTheWindow({
         webContents: void 0
       })
     })
@@ -157,7 +159,7 @@ describe('BrowserWindow module', () => {
     })
 
     it('should emit unload handler', (done) => {
-      w.webContents.on('did-finish-load', () => { w.close() })
+      w.webContents.once('did-finish-load', () => { w.close() })
       w.once('closed', () => {
         const test = path.join(fixtures, 'api', 'unload')
         const content = fs.readFileSync(test)
@@ -169,7 +171,7 @@ describe('BrowserWindow module', () => {
     })
     it('should emit beforeunload handler', (done) => {
       w.once('onbeforeunload', () => { done() })
-      w.webContents.on('did-finish-load', () => { w.close() })
+      w.webContents.once('did-finish-load', () => { w.close() })
       w.loadFile(path.join(fixtures, 'api', 'beforeunload-false.html'))
     })
     it('should not crash when invoked synchronously inside navigation observer', (done) => {
@@ -290,46 +292,47 @@ describe('BrowserWindow module', () => {
     describe('POST navigations', () => {
       afterEach(() => { w.webContents.session.webRequest.onBeforeSendHeaders(null) })
 
-      it('supports specifying POST data', (done) => {
-        w.webContents.on('did-finish-load', () => done())
-        w.loadURL(server.url, { postData: postData })
+      it('supports specifying POST data', async () => {
+        await w.loadURL(server.url, { postData: postData })
       })
-      it('sets the content type header on URL encoded forms', (done) => {
-        w.webContents.on('did-finish-load', () => {
+      it('sets the content type header on URL encoded forms', async () => {
+        await w.loadURL(server.url)
+        const requestDetails = new Promise(resolve => {
           w.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-            assert.strictEqual(details.requestHeaders['content-type'], 'application/x-www-form-urlencoded')
-            done()
+            resolve(details)
           })
-          w.webContents.executeJavaScript(`
-            form = document.createElement('form')
-            document.body.appendChild(form)
-            form.method = 'POST'
-            form.target = '_blank'
-            form.submit()
-          `)
         })
-        w.loadURL(server.url)
+        w.webContents.executeJavaScript(`
+          form = document.createElement('form')
+          document.body.appendChild(form)
+          form.method = 'POST'
+          form.target = '_blank'
+          form.submit()
+        `)
+        const details = await requestDetails
+        assert.strictEqual(details.requestHeaders['content-type'], 'application/x-www-form-urlencoded')
       })
-      it('sets the content type header on multi part forms', (done) => {
-        w.webContents.on('did-finish-load', () => {
+      it('sets the content type header on multi part forms', async () => {
+        await w.loadURL(server.url)
+        const requestDetails = new Promise(resolve => {
           w.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-            assert(details.requestHeaders['content-type'].startsWith('multipart/form-data; boundary=----WebKitFormBoundary'))
-            done()
+            resolve(details)
           })
-          w.webContents.executeJavaScript(`
-            form = document.createElement('form')
-            document.body.appendChild(form)
-            form.method = 'POST'
-            form.target = '_blank'
-            form.enctype = 'multipart/form-data'
-            file = document.createElement('input')
-            file.type = 'file'
-            file.name = 'file'
-            form.appendChild(file)
-            form.submit()
-          `)
         })
-        w.loadURL(server.url)
+        w.webContents.executeJavaScript(`
+          form = document.createElement('form')
+          document.body.appendChild(form)
+          form.method = 'POST'
+          form.target = '_blank'
+          form.enctype = 'multipart/form-data'
+          file = document.createElement('input')
+          file.type = 'file'
+          file.name = 'file'
+          form.appendChild(file)
+          form.submit()
+        `)
+        const details = await requestDetails
+        assert(details.requestHeaders['content-type'].startsWith('multipart/form-data; boundary=----WebKitFormBoundary'))
       })
     })
 
@@ -360,7 +363,6 @@ describe('BrowserWindow module', () => {
 
     it('is emitted after will-navigate on redirects', (done) => {
       let navigateCalled = false
-      w.loadURL(`${server.url}/navigate-302`)
       w.webContents.on('will-navigate', () => {
         navigateCalled = true
       })
@@ -368,6 +370,7 @@ describe('BrowserWindow module', () => {
         expect(navigateCalled).to.equal(true, 'should have called will-navigate first')
         done()
       })
+      w.loadURL(`${server.url}/navigate-302`)
     })
 
     it('is emitted before did-stop-loading on redirects', (done) => {
@@ -479,7 +482,7 @@ describe('BrowserWindow module', () => {
     })
   })
 
-  describe('BrowserWindow.getFocusedWindow()', (done) => {
+  describe('BrowserWindow.getFocusedWindow()', () => {
     it('returns the opener window when dev tools window is focused', (done) => {
       w.show()
       w.webContents.once('devtools-focused', () => {
@@ -490,18 +493,71 @@ describe('BrowserWindow module', () => {
     })
   })
 
-  describe('BrowserWindow.capturePage(rect, callback)', () => {
-    it('calls the callback with a Buffer', async () => {
-      const image = await new Promise((resolve) => {
-        w.capturePage({
-          x: 0,
-          y: 0,
-          width: 100,
-          height: 100
-        }, resolve)
+  describe('BrowserWindow.moveTop()', () => {
+    it('should not steal focus', async () => {
+      const posDelta = 50
+      const wShownInactive = emittedOnce(w, 'show')
+      w.showInactive()
+      await wShownInactive
+      assert(!w.isFocused())
+
+      const otherWindow = new BrowserWindow({ show: false, title: 'otherWindow' })
+      const otherWindowShown = emittedOnce(otherWindow, 'show')
+      otherWindow.loadURL('data:text/html,<html><body background-color: rgba(255,255,255,0)></body></html>')
+      otherWindow.show()
+      await otherWindowShown
+      assert(otherWindow.isFocused())
+
+      w.moveTop()
+      const wPos = w.getPosition()
+      const wMoving = emittedOnce(w, 'move')
+      w.setPosition(wPos[0] + posDelta, wPos[1] + posDelta)
+      await wMoving
+      assert(!w.isFocused())
+      assert(otherWindow.isFocused())
+
+      const wFocused = emittedOnce(w, 'focus')
+      w.focus()
+      await wFocused
+      assert(w.isFocused())
+
+      otherWindow.moveTop()
+      const otherWindowPos = otherWindow.getPosition()
+      const otherWindowMoving = emittedOnce(otherWindow, 'move')
+      otherWindow.setPosition(otherWindowPos[0] + posDelta, otherWindowPos[1] + posDelta)
+      await otherWindowMoving
+      assert(!otherWindow.isFocused())
+      assert(w.isFocused())
+
+      await closeWindow(otherWindow, { assertSingleWindow: false }).then(() => {
+        assert.strictEqual(BrowserWindow.getAllWindows().length, 2) // Test window + w
+      })
+    })
+  })
+
+  describe('BrowserWindow.capturePage(rect)', (done) => {
+    it('returns a Promise with a Buffer', async () => {
+      const image = await w.capturePage({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100
       })
 
       expect(image.isEmpty()).to.be.true()
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('returns a Promise with a Buffer (callback)', (done) => {
+      w.capturePage({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100
+      }, (image) => {
+        expect(image.isEmpty()).to.be.true()
+        done()
+      })
     })
 
     it('preserves transparency', async () => {
@@ -511,16 +567,41 @@ describe('BrowserWindow module', () => {
         height: 400,
         transparent: true
       })
+      const p = emittedOnce(w, 'ready-to-show')
       w.loadURL('data:text/html,<html><body background-color: rgba(255,255,255,0)></body></html>')
-      await emittedOnce(w, 'ready-to-show')
+      await p
       w.show()
 
-      const image = await new Promise((resolve) => w.capturePage(resolve))
+      const image = await w.capturePage()
       const imgBuffer = image.toPNG()
 
       // Check the 25th byte in the PNG.
       // Values can be 0,2,3,4, or 6. We want 6, which is RGB + Alpha
       expect(imgBuffer[25]).to.equal(6)
+    })
+
+    // TODO(codebytere): remove when promisification is complete
+    it('preserves transparency (callback)', (done) => {
+      openTheWindow({
+        show: false,
+        width: 400,
+        height: 400,
+        transparent: true
+      }).then(w => {
+        const p = emittedOnce(w, 'ready-to-show')
+        w.loadURL('data:text/html,<html><body background-color: rgba(255,255,255,0)></body></html>')
+        p.then(() => {
+          w.show()
+
+          w.capturePage((image) => {
+            const imgBuffer = image.toPNG()
+            // Check the 25th byte in the PNG.
+            // Values can be 0,2,3,4, or 6. We want 6, which is RGB + Alpha
+            expect(imgBuffer[25]).to.equal(6)
+            done()
+          })
+        })
+      })
     })
   })
 
@@ -1276,46 +1357,90 @@ describe('BrowserWindow module', () => {
     afterEach(() => { ipcMain.removeAllListeners('answer') })
 
     describe('"preload" option', () => {
-      it('loads the script before other scripts in window', (done) => {
-        const preload = path.join(fixtures, 'module', 'set-global.js')
-        ipcMain.once('answer', (event, test) => {
-          assert.strictEqual(test, 'preload')
-          done()
+      const doesNotLeakSpec = (name, webPrefs) => {
+        it(name, async function () {
+          w.destroy()
+          w = new BrowserWindow({
+            webPreferences: {
+              ...webPrefs,
+              preload: path.resolve(fixtures, 'module', 'empty.js')
+            },
+            show: false
+          })
+          const leakResult = emittedOnce(ipcMain, 'leak-result')
+          w.loadFile(path.join(fixtures, 'api', 'no-leak.html'))
+          const [, result] = await leakResult
+          console.log(result)
+          expect(result).to.have.property('require', 'undefined')
+          expect(result).to.have.property('exports', 'undefined')
+          expect(result).to.have.property('windowExports', 'undefined')
+          expect(result).to.have.property('windowPreload', 'undefined')
+          expect(result).to.have.property('windowRequire', 'undefined')
         })
-        w.destroy()
-        w = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            preload: preload
-          }
-        })
-        w.loadFile(path.join(fixtures, 'api', 'preload.html'))
+      }
+      doesNotLeakSpec('does not leak require', {
+        nodeIntegration: false,
+        sandbox: false,
+        contextIsolation: false
       })
-      it('can successfully delete the Buffer global', (done) => {
-        const preload = path.join(fixtures, 'module', 'delete-buffer.js')
-        ipcMain.once('answer', (event, test) => {
-          assert.strictEqual(test.toString(), 'buffer')
-          done()
-        })
+      doesNotLeakSpec('does not leak require when sandbox is enabled', {
+        nodeIntegration: false,
+        sandbox: true,
+        contextIsolation: false
+      })
+      doesNotLeakSpec('does not leak require when context isolation is enabled', {
+        nodeIntegration: false,
+        sandbox: false,
+        contextIsolation: true
+      })
+      doesNotLeakSpec('does not leak require when context isolation and sandbox are enabled', {
+        nodeIntegration: false,
+        sandbox: true,
+        contextIsolation: true
+      })
+
+      it('loads the script before other scripts in window', async () => {
+        const preload = path.join(fixtures, 'module', 'set-global.js')
         w.destroy()
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload
+            nodeIntegration: true,
+            preload
           }
         })
+        const p = emittedOnce(ipcMain, 'answer')
         w.loadFile(path.join(fixtures, 'api', 'preload.html'))
+        const [, test] = await p
+        expect(test).to.eql('preload')
+      })
+      it('can successfully delete the Buffer global', async () => {
+        const preload = path.join(fixtures, 'module', 'delete-buffer.js')
+        w.destroy()
+        w = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            nodeIntegration: true,
+            preload
+          }
+        })
+        const p = emittedOnce(ipcMain, 'answer')
+        w.loadFile(path.join(fixtures, 'api', 'preload.html'))
+        const [, test] = await p
+        expect(test.toString()).to.eql('buffer')
       })
       it('has synchronous access to all eventual window APIs', async () => {
         const preload = path.join(fixtures, 'module', 'access-blink-apis.js')
         const w = await openTheWindow({
           show: false,
           webPreferences: {
-            preload: preload
+            nodeIntegration: true,
+            preload
           }
         })
+        const p = emittedOnce(ipcMain, 'answer')
         w.loadFile(path.join(fixtures, 'api', 'preload.html'))
-        const [, test] = await emittedOnce(ipcMain, 'answer')
+        const [, test] = await p
         expect(test).to.be.an('object')
         expect(test.atPreload).to.be.an('array')
         expect(test.atLoad).to.be.an('array')
@@ -1342,22 +1467,29 @@ describe('BrowserWindow module', () => {
         assert.deepStrictEqual(defaultSession.getPreloads(), preloads)
       })
 
-      it('loads the script before other scripts in window including normal preloads', function (done) {
-        ipcMain.once('vars', function (event, preload1, preload2, preload3) {
-          assert.strictEqual(preload1, 'preload-1')
-          assert.strictEqual(preload2, 'preload-1-2')
-          assert.strictEqual(preload3, 'preload-1-2-3')
-          done()
+      const generateSpecs = (description, sandbox) => {
+        describe(description, () => {
+          it('loads the script before other scripts in window including normal preloads', function (done) {
+            ipcMain.once('vars', function (event, preload1, preload2) {
+              assert.strictEqual(preload1, 'preload-1')
+              assert.strictEqual(preload2, 'preload-1-2')
+              done()
+            })
+            w.destroy()
+            w = new BrowserWindow({
+              show: false,
+              webPreferences: {
+                sandbox,
+                preload: path.join(fixtures, 'module', 'get-global-preload.js')
+              }
+            })
+            w.loadURL('about:blank')
+          })
         })
-        w.destroy()
-        w = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            preload: path.join(fixtures, 'module', 'set-global-preload-3.js')
-          }
-        })
-        w.loadFile(path.join(fixtures, 'api', 'preloads.html'))
-      })
+      }
+
+      generateSpecs('without sandbox', false)
+      generateSpecs('with sandbox', true)
     })
 
     describe('"additionalArguments" option', () => {
@@ -1371,7 +1503,8 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload,
+            nodeIntegration: true,
+            preload,
             additionalArguments: ['--my-magic-arg']
           }
         })
@@ -1388,7 +1521,8 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload,
+            nodeIntegration: true,
+            preload,
             additionalArguments: ['--my-magic-arg=foo']
           }
         })
@@ -1397,7 +1531,7 @@ describe('BrowserWindow module', () => {
     })
 
     describe('"node-integration" option', () => {
-      it('disables node integration when specified to false', (done) => {
+      it('disables node integration by default', (done) => {
         const preload = path.join(fixtures, 'module', 'send-later.js')
         ipcMain.once('answer', (event, typeofProcess, typeofBuffer) => {
           assert.strictEqual(typeofProcess, 'undefined')
@@ -1408,8 +1542,7 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload,
-            nodeIntegration: false
+            preload
           }
         })
         w.loadFile(path.join(fixtures, 'api', 'blank.html'))
@@ -1425,13 +1558,13 @@ describe('BrowserWindow module', () => {
             const w = await openTheWindow({
               show: false,
               webPreferences: {
-                nodeIntegration: false,
                 preload,
                 sandbox
               }
             })
+            const p = emittedOnce(ipcMain, 'remote')
             w.loadFile(path.join(fixtures, 'api', 'blank.html'))
-            const [, remote] = await emittedOnce(ipcMain, 'remote')
+            const [, remote] = await p
             expect(remote).to.equal('object')
           })
 
@@ -1439,14 +1572,14 @@ describe('BrowserWindow module', () => {
             const w = await openTheWindow({
               show: false,
               webPreferences: {
-                nodeIntegration: false,
                 preload,
                 sandbox,
                 enableRemoteModule: false
               }
             })
+            const p = emittedOnce(ipcMain, 'remote')
             w.loadFile(path.join(fixtures, 'api', 'blank.html'))
-            const [, remote] = await emittedOnce(ipcMain, 'remote')
+            const [, remote] = await p
             expect(remote).to.equal('undefined')
           })
         })
@@ -1468,29 +1601,6 @@ describe('BrowserWindow module', () => {
 
       const preload = path.join(fixtures, 'module', 'preload-sandbox.js')
 
-      // http protocol to simulate accessing another domain. This is required
-      // because the code paths for cross domain popups is different.
-      function crossDomainHandler (request, callback) {
-        // Disabled due to false positive in StandardJS
-        // eslint-disable-next-line standard/no-callback-literal
-        callback({
-          mimeType: 'text/html',
-          data: `<html><body><h1>${request.url}</h1></body></html>`
-        })
-      }
-
-      before((done) => {
-        protocol.interceptStringProtocol('http', crossDomainHandler, () => {
-          done()
-        })
-      })
-
-      after((done) => {
-        protocol.uninterceptProtocol('http', () => {
-          done()
-        })
-      })
-
       it('exposes ipcRenderer to preload script', (done) => {
         ipcMain.once('answer', function (event, test) {
           assert.strictEqual(test, 'preload')
@@ -1501,7 +1611,7 @@ describe('BrowserWindow module', () => {
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload
+            preload
           }
         })
         w.loadFile(path.join(fixtures, 'api', 'preload.html'))
@@ -1524,18 +1634,30 @@ describe('BrowserWindow module', () => {
         w.loadFile(path.join(fixtures, 'api', 'preload.html'))
       })
 
+      it('exposes "loaded" event to preload script', function (done) {
+        w.destroy()
+        w = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            sandbox: true,
+            preload
+          }
+        })
+        ipcMain.once('process-loaded', () => done())
+        w.loadURL('about:blank')
+      })
+
       it('exposes "exit" event to preload script', function (done) {
         w.destroy()
         w = new BrowserWindow({
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload
+            preload
           }
         })
         const htmlPath = path.join(fixtures, 'api', 'sandbox.html?exit-event')
         const pageUrl = 'file://' + htmlPath
-        w.loadURL(pageUrl)
         ipcMain.once('answer', function (event, url) {
           let expectedUrl = pageUrl
           if (process.platform === 'win32') {
@@ -1544,6 +1666,7 @@ describe('BrowserWindow module', () => {
           assert.strictEqual(url, expectedUrl)
           done()
         })
+        w.loadURL(pageUrl)
       })
 
       it('should open windows in same domain with cross-scripting enabled', (done) => {
@@ -1552,13 +1675,12 @@ describe('BrowserWindow module', () => {
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload
+            preload
           }
         })
         ipcRenderer.send('set-web-preferences-on-next-new-window', w.webContents.id, 'preload', preload)
         const htmlPath = path.join(fixtures, 'api', 'sandbox.html?window-open')
         const pageUrl = 'file://' + htmlPath
-        w.loadURL(pageUrl)
         w.webContents.once('new-window', (e, url, frameName, disposition, options) => {
           let expectedUrl = pageUrl
           if (process.platform === 'win32') {
@@ -1573,6 +1695,7 @@ describe('BrowserWindow module', () => {
             done()
           })
         })
+        w.loadURL(pageUrl)
       })
 
       it('should open windows in another domain with cross-scripting disabled', async () => {
@@ -1585,32 +1708,53 @@ describe('BrowserWindow module', () => {
         })
 
         ipcRenderer.send('set-web-preferences-on-next-new-window', w.webContents.id, 'preload', preload)
-        w.loadFile(path.join(fixtures, 'api', 'sandbox.html'), { search: 'window-open-external' })
-        const expectedPopupUrl = 'http://www.google.com/#q=electron' // Set in the "sandbox.html".
+        const openerWindowOpen = emittedOnce(ipcMain, 'opener-loaded')
+        w.loadFile(
+          path.join(fixtures, 'api', 'sandbox.html'),
+          { search: 'window-open-external' }
+        )
+
+        // Wait for a message from the main window saying that it's ready.
+        await openerWindowOpen
+
+        // Ask the opener to open a popup with window.opener.
+        const expectedPopupUrl = `${server.url}/cross-site` // Set in "sandbox.html".
+
+        const browserWindowCreated = emittedOnce(app, 'browser-window-created')
+        w.webContents.send('open-the-popup', expectedPopupUrl)
 
         // The page is going to open a popup that it won't be able to close.
         // We have to close it from here later.
         // XXX(alexeykuzmin): It will leak if the test fails too soon.
-        const [, popupWindow] = await emittedOnce(app, 'browser-window-created')
+        const [, popupWindow] = await browserWindowCreated
 
-        // Wait for a message from the popup's preload script.
-        const [, openerIsNull, html, locationHref] = await emittedOnce(ipcMain, 'child-loaded')
-        expect(openerIsNull).to.be.true('window.opener is not null')
-        expect(html).to.equal(`<h1>${expectedPopupUrl}</h1>`,
-          'looks like a http: request has not been intercepted locally')
+        // Ask the popup window for details.
+        const detailsAnswer = emittedOnce(ipcMain, 'child-loaded')
+        popupWindow.webContents.send('provide-details')
+        const [, openerIsNull, , locationHref] = await detailsAnswer
+        expect(openerIsNull).to.be.false('window.opener is null')
         expect(locationHref).to.equal(expectedPopupUrl)
 
         // Ask the page to access the popup.
+        const touchPopupResult = emittedOnce(ipcMain, 'answer')
         w.webContents.send('touch-the-popup')
-        const [, exceptionMessage] = await emittedOnce(ipcMain, 'answer')
+        const [, popupAccessMessage] = await touchPopupResult
+
+        // Ask the popup to access the opener.
+        const touchOpenerResult = emittedOnce(ipcMain, 'answer')
+        popupWindow.webContents.send('touch-the-opener')
+        const [, openerAccessMessage] = await touchOpenerResult
 
         // We don't need the popup anymore, and its parent page can't close it,
         // so let's close it from here before we run any checks.
         await closeWindow(popupWindow, { assertSingleWindow: false })
 
-        expect(exceptionMessage).to.be.a('string',
+        expect(popupAccessMessage).to.be.a('string',
           `child's .document is accessible from its parent window`)
-        expect(exceptionMessage).to.match(/^Blocked a frame with origin/)
+        expect(popupAccessMessage).to.match(/^Blocked a frame with origin/)
+        expect(openerAccessMessage).to.be.a('string',
+          `opener .document is accessible from a popup window`)
+        expect(openerAccessMessage).to.match(/^Blocked a frame with origin/)
       })
 
       it('should inherit the sandbox setting in opened windows', (done) => {
@@ -1656,7 +1800,7 @@ describe('BrowserWindow module', () => {
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload
+            preload
           }
         })
         ipcRenderer.send('set-web-preferences-on-next-new-window', w.webContents.id, 'preload', preload)
@@ -1735,36 +1879,13 @@ describe('BrowserWindow module', () => {
         w.loadFile(path.join(fixtures, 'pages', 'window-open.html'))
       })
 
-      // TODO(alexeykuzmin): `GetProcessMemoryInfo()` is not available starting Ch67.
-      xit('releases memory after popup is closed', (done) => {
-        w.destroy()
-        w = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            preload: preload,
-            sandbox: true
-          }
-        })
-        w.loadFile(path.join(fixtures, 'api', 'sandbox.html'), { search: 'allocate-memory' })
-        ipcMain.once('answer', function (event, { bytesBeforeOpen, bytesAfterOpen, bytesAfterClose }) {
-          const memoryIncreaseByOpen = bytesAfterOpen - bytesBeforeOpen
-          const memoryDecreaseByClose = bytesAfterOpen - bytesAfterClose
-          // decreased memory should be less than increased due to factors we
-          // can't control, but given the amount of memory allocated in the
-          // fixture, we can reasonably expect decrease to be at least 70% of
-          // increase
-          assert(memoryDecreaseByClose > memoryIncreaseByOpen * 0.7)
-          done()
-        })
-      })
-
       // see #9387
       it('properly manages remote object references after page reload', (done) => {
         w.destroy()
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload,
+            preload,
             sandbox: true
           }
         })
@@ -1797,7 +1918,7 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: false,
           webPreferences: {
-            preload: preload,
+            preload,
             sandbox: true
           }
         })
@@ -1829,15 +1950,30 @@ describe('BrowserWindow module', () => {
 
       it('validates process APIs access in sandboxed renderer', (done) => {
         ipcMain.once('answer', function (event, test) {
-          assert.strictEqual(test.pid, w.webContents.getOSProcessId())
-          assert.strictEqual(test.arch, remote.process.arch)
-          assert.strictEqual(test.platform, remote.process.platform)
-          assert.deepStrictEqual(...resolveGetters(test.env, remote.process.env))
-          assert.strictEqual(test.execPath, remote.process.helperExecPath)
-          assert.strictEqual(test.sandboxed, true)
-          assert.strictEqual(test.type, 'renderer')
-          assert.strictEqual(test.version, remote.process.version)
-          assert.deepStrictEqual(test.versions, remote.process.versions)
+          expect(test.hasCrash).to.be.true()
+          expect(test.hasHang).to.be.true()
+          expect(test.heapStatistics).to.be.an('object')
+          expect(test.processMemoryInfo).to.be.an('object')
+          expect(test.systemVersion).to.be.a('string')
+          expect(test.cpuUsage).to.be.an('object')
+          expect(test.ioCounters).to.be.an('object')
+          expect(test.arch).to.equal(remote.process.arch)
+          expect(test.platform).to.equal(remote.process.platform)
+          expect(test.env).to.deep.equal(remote.process.env)
+          expect(test.execPath).to.equal(remote.process.helperExecPath)
+          expect(test.sandboxed).to.be.true()
+          expect(test.type).to.equal('renderer')
+          expect(test.version).to.equal(remote.process.version)
+          expect(test.versions).to.deep.equal(remote.process.versions)
+
+          if (process.platform === 'linux' && test.osSandbox) {
+            expect(test.creationTime).to.be.null()
+            expect(test.systemMemoryInfo).to.be.null()
+          } else {
+            expect(test.creationTime).to.be.a('number')
+            expect(test.systemMemoryInfo).to.be.an('object')
+          }
+
           done()
         })
         remote.process.env.sandboxmain = 'foo'
@@ -1846,8 +1982,11 @@ describe('BrowserWindow module', () => {
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload
+            preload
           }
+        })
+        w.webContents.once('preload-error', (event, preloadPath, error) => {
+          done(error)
         })
         w.loadFile(path.join(fixtures, 'api', 'preload.html'))
       })
@@ -1858,14 +1997,16 @@ describe('BrowserWindow module', () => {
           show: false,
           webPreferences: {
             sandbox: true,
-            preload: preload,
+            preload,
             webviewTag: true
           }
         })
+        const didAttachWebview = emittedOnce(w.webContents, 'did-attach-webview')
+        const webviewDomReady = emittedOnce(ipcMain, 'webview-dom-ready')
         w.loadFile(path.join(fixtures, 'pages', 'webview-did-attach-event.html'))
 
-        const [, webContents] = await emittedOnce(w.webContents, 'did-attach-webview')
-        const [, id] = await emittedOnce(ipcMain, 'webview-dom-ready')
+        const [, webContents] = await didAttachWebview
+        const [, id] = await webviewDomReady
         expect(webContents.id).to.equal(id)
       })
     })
@@ -1876,6 +2017,7 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: false,
           webPreferences: {
+            nodeIntegration: true,
             nativeWindowOpen: true
           }
         })
@@ -1963,31 +2105,46 @@ describe('BrowserWindow module', () => {
         w = new BrowserWindow({
           show: true,
           webPreferences: {
-            nodeIntegration: false,
             nativeWindowOpen: true
           }
         })
 
-        return new Promise((resolve, reject) => {
-          ipcRenderer.send('set-web-preferences-on-next-new-window', w.webContents.id, 'preload', path.join(fixtures, 'api', 'window-open-preload.js'))
-          ipcMain.once('answer', (event, args, typeofProcess) => {
-            assert.strictEqual(args.includes('--node-integration=false'), true)
-            assert.strictEqual(args.includes('--native-window-open'), true)
-            assert.strictEqual(typeofProcess, 'undefined')
-            resolve()
-          })
-          w.loadFile(path.join(fixtures, 'api', 'window-open-location-open.html'))
-        })
+        ipcRenderer.send('set-web-preferences-on-next-new-window', w.webContents.id, 'preload', path.join(fixtures, 'api', 'window-open-preload.js'))
+        const p = emittedOnce(ipcMain, 'answer')
+        w.loadFile(path.join(fixtures, 'api', 'window-open-location-open.html'))
+        const [, args, typeofProcess] = await p
+        expect(args).not.to.include('--node-integration')
+        expect(args).to.include('--native-window-open')
+        expect(typeofProcess).to.eql('undefined')
       })
 
       it('should have nodeIntegration disabled in child windows', async () => {
-        return new Promise((resolve, reject) => {
-          ipcMain.once('answer', (event, typeofProcess) => {
-            assert.strictEqual(typeofProcess, 'undefined')
-            resolve()
-          })
-          w.loadFile(path.join(fixtures, 'api', 'native-window-open-argv.html'))
+        const p = emittedOnce(ipcMain, 'answer')
+        w.loadFile(path.join(fixtures, 'api', 'native-window-open-argv.html'))
+        const [, typeofProcess] = await p
+        expect(typeofProcess).to.eql('undefined')
+      })
+    })
+
+    describe('"disableHtmlFullscreenWindowResize" option', () => {
+      it('prevents window from resizing when set', (done) => {
+        w.destroy()
+        w = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            disableHtmlFullscreenWindowResize: true
+          }
         })
+        w.webContents.once('did-finish-load', () => {
+          const size = w.getSize()
+          w.webContents.once('enter-html-full-screen', () => {
+            const newSize = w.getSize()
+            expect(newSize).to.deep.equal(size)
+            done()
+          })
+          w.webContents.executeJavaScript('document.body.webkitRequestFullscreen()', true)
+        })
+        w.loadURL('about:blank')
       })
     })
   })
@@ -2078,7 +2235,8 @@ describe('BrowserWindow module', () => {
     })
   })
 
-  describe('document.visibilityState/hidden', () => {
+  // visibilitychange event is broken upstream, see crbug.com/920839
+  xdescribe('document.visibilityState/hidden', () => {
     beforeEach(() => { w.destroy() })
 
     function onVisibilityChange (callback) {
@@ -2100,7 +2258,14 @@ describe('BrowserWindow module', () => {
     afterEach(() => { ipcMain.removeAllListeners('pong') })
 
     it('visibilityState is initially visible despite window being hidden', (done) => {
-      w = new BrowserWindow({ show: false, width: 100, height: 100 })
+      w = new BrowserWindow({
+        show: false,
+        width: 100,
+        height: 100,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       let readyToShow = false
       w.once('ready-to-show', () => {
@@ -2118,7 +2283,13 @@ describe('BrowserWindow module', () => {
       w.loadFile(path.join(fixtures, 'pages', 'visibilitychange.html'))
     })
     it('visibilityState changes when window is hidden', (done) => {
-      w = new BrowserWindow({ width: 100, height: 100 })
+      w = new BrowserWindow({
+        width: 100,
+        height: 100,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       onNextVisibilityChange((visibilityState, hidden) => {
         assert.strictEqual(visibilityState, 'visible')
@@ -2136,7 +2307,13 @@ describe('BrowserWindow module', () => {
       w.loadFile(path.join(fixtures, 'pages', 'visibilitychange.html'))
     })
     it('visibilityState changes when window is shown', (done) => {
-      w = new BrowserWindow({ width: 100, height: 100 })
+      w = new BrowserWindow({
+        width: 100,
+        height: 100,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       onNextVisibilityChange((visibilityState, hidden) => {
         onVisibilityChange((visibilityState, hidden) => {
@@ -2162,7 +2339,13 @@ describe('BrowserWindow module', () => {
         return done()
       }
 
-      w = new BrowserWindow({ width: 100, height: 100 })
+      w = new BrowserWindow({
+        width: 100,
+        height: 100,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       onNextVisibilityChange((visibilityState, hidden) => {
         onVisibilityChange((visibilityState, hidden) => {
@@ -2188,7 +2371,13 @@ describe('BrowserWindow module', () => {
         return done()
       }
 
-      w = new BrowserWindow({ width: 100, height: 100 })
+      w = new BrowserWindow({
+        width: 100,
+        height: 100,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       onNextVisibilityChange((visibilityState, hidden) => {
         assert.strictEqual(visibilityState, 'visible')
@@ -2211,7 +2400,8 @@ describe('BrowserWindow module', () => {
         width: 100,
         height: 100,
         webPreferences: {
-          backgroundThrottling: false
+          backgroundThrottling: false,
+          nodeIntegration: true
         }
       })
 
@@ -2362,16 +2552,18 @@ describe('BrowserWindow module', () => {
   })
 
   describe('beginFrameSubscription method', () => {
-    before(function () {
-      // This test is too slow, only test it on CI.
-      if (!isCI) {
-        this.skip()
-      }
-
-      // FIXME These specs crash on Linux when run in a docker container
-      if (isCI && process.platform === 'linux') {
-        this.skip()
-      }
+    it('does not crash when callback returns nothing', (done) => {
+      w.loadFile(path.join(fixtures, 'api', 'frame-subscriber.html'))
+      w.webContents.on('dom-ready', () => {
+        w.webContents.beginFrameSubscription(function (data) {
+          // Pending endFrameSubscription to next tick can reliably reproduce
+          // a crash which happens when nothing is returned in the callback.
+          setTimeout(() => {
+            w.webContents.endFrameSubscription()
+            done()
+          })
+        })
+      })
     })
 
     it('subscribes to frame updates', (done) => {
@@ -2389,14 +2581,14 @@ describe('BrowserWindow module', () => {
         })
       })
     })
+
     it('subscribes to frame updates (only dirty rectangle)', (done) => {
       let called = false
       let gotInitialFullSizeFrame = false
       const [contentWidth, contentHeight] = w.getContentSize()
-      w.loadFile(path.join(fixtures, 'api', 'frame-subscriber.html'))
       w.webContents.on('did-finish-load', () => {
-        w.webContents.beginFrameSubscription(true, (data, rect) => {
-          if (data.length === 0) {
+        w.webContents.beginFrameSubscription(true, (image, rect) => {
+          if (image.isEmpty()) {
             // Chromium sometimes sends a 0x0 frame at the beginning of the
             // page load.
             return
@@ -2417,12 +2609,14 @@ describe('BrowserWindow module', () => {
           // assert(rect.width < contentWidth || rect.height < contentHeight)
           called = true
 
-          expect(data.length).to.equal(rect.width * rect.height * 4)
+          expect(image.getBitmap().length).to.equal(rect.width * rect.height * 4)
           w.webContents.endFrameSubscription()
           done()
         })
       })
+      w.loadFile(path.join(fixtures, 'api', 'frame-subscriber.html'))
     })
+
     it('throws error when subscriber is not well defined', (done) => {
       w.loadFile(path.join(fixtures, 'api', 'frame-subscriber.html'))
       try {
@@ -2451,17 +2645,13 @@ describe('BrowserWindow module', () => {
       }
     })
 
-    it('should save page to disk', (done) => {
-      w.webContents.on('did-finish-load', () => {
-        w.webContents.savePage(savePageHtmlPath, 'HTMLComplete', function (error) {
-          assert.strictEqual(error, null)
-          assert(fs.existsSync(savePageHtmlPath))
-          assert(fs.existsSync(savePageJsPath))
-          assert(fs.existsSync(savePageCssPath))
-          done()
-        })
-      })
-      w.loadFile(path.join(fixtures, 'pages', 'save_page', 'index.html'))
+    it('should save page to disk', async () => {
+      await w.loadFile(path.join(fixtures, 'pages', 'save_page', 'index.html'))
+      await w.webContents.savePage(savePageHtmlPath, 'HTMLComplete')
+
+      assert(fs.existsSync(savePageHtmlPath))
+      assert(fs.existsSync(savePageJsPath))
+      assert(fs.existsSync(savePageCssPath))
     })
   })
 
@@ -2953,12 +3143,6 @@ describe('BrowserWindow module', () => {
     })
 
     describe('win.setParentWindow(parent)', () => {
-      before(function () {
-        if (process.platform === 'win32') {
-          this.skip()
-        }
-      })
-
       beforeEach(() => {
         if (c != null) c.destroy()
         c = new BrowserWindow({ show: false })
@@ -3047,6 +3231,21 @@ describe('BrowserWindow module', () => {
       assert.throws(() => {
         w.webContents.send(null)
       }, 'Missing required channel argument')
+    })
+  })
+
+  describe('window.getNativeWindowHandle()', () => {
+    before(function () {
+      if (!nativeModulesEnabled) {
+        this.skip()
+      }
+    })
+
+    it('returns valid handle', () => {
+      // The module's source code is hosted at
+      // https://github.com/electron/node-is-valid-window
+      const isValidWindow = remote.require('is-valid-window')
+      assert.ok(isValidWindow(w.getNativeWindowHandle()))
     })
   })
 
@@ -3189,6 +3388,7 @@ describe('BrowserWindow module', () => {
       w = new BrowserWindow({
         show: false,
         webPreferences: {
+          nodeIntegration: true,
           partition: 'temp'
         }
       })
@@ -3199,13 +3399,13 @@ describe('BrowserWindow module', () => {
 
       showLastDevToolsPanel()
 
-      w.loadURL('about:blank')
-      w.webContents.openDevTools({ mode: 'bottom' })
-
       ipcMain.once('answer', function (event, message) {
         assert.strictEqual(message.runtimeId, 'foo')
         done()
       })
+
+      w.loadURL('about:blank')
+      w.webContents.openDevTools({ mode: 'bottom' })
     })
 
     it('serializes the registered extensions on quit', () => {
@@ -3419,32 +3619,35 @@ describe('BrowserWindow module', () => {
     })
 
     it('separates the page context from the Electron/preload context', async () => {
+      const p = emittedOnce(ipcMain, 'isolated-world')
       iw.loadFile(path.join(fixtures, 'api', 'isolated.html'))
-      const [, data] = await emittedOnce(ipcMain, 'isolated-world')
+      const [, data] = await p
       assert.deepStrictEqual(data, expectedContextData)
     })
     it('recreates the contexts on reload', async () => {
-      iw.loadFile(path.join(fixtures, 'api', 'isolated.html'))
-      await emittedOnce(iw.webContents, 'did-finish-load')
+      await iw.loadFile(path.join(fixtures, 'api', 'isolated.html'))
+      const isolatedWorld = emittedOnce(ipcMain, 'isolated-world')
       iw.webContents.reload()
-      const [, data] = await emittedOnce(ipcMain, 'isolated-world')
+      const [, data] = await isolatedWorld
       assert.deepStrictEqual(data, expectedContextData)
     })
     it('enables context isolation on child windows', async () => {
+      const browserWindowCreated = emittedOnce(app, 'browser-window-created')
       iw.loadFile(path.join(fixtures, 'pages', 'window-open.html'))
-      const [, window] = await emittedOnce(app, 'browser-window-created')
+      const [, window] = await browserWindowCreated
       assert.ok(window.webContents.getLastWebPreferences().contextIsolation)
     })
     it('separates the page context from the Electron/preload context with sandbox on', async () => {
+      const p = emittedOnce(ipcMain, 'isolated-world')
       ws.loadFile(path.join(fixtures, 'api', 'isolated.html'))
-      const [, data] = await emittedOnce(ipcMain, 'isolated-world')
+      const [, data] = await p
       assert.deepStrictEqual(data, expectedContextData)
     })
     it('recreates the contexts on reload with sandbox on', async () => {
-      ws.loadFile(path.join(fixtures, 'api', 'isolated.html'))
-      await emittedOnce(ws.webContents, 'did-finish-load')
+      await ws.loadFile(path.join(fixtures, 'api', 'isolated.html'))
+      const isolatedWorld = emittedOnce(ipcMain, 'isolated-world')
       ws.webContents.reload()
-      const [, data] = await emittedOnce(ipcMain, 'isolated-world')
+      const [, data] = await isolatedWorld
       assert.deepStrictEqual(data, expectedContextData)
     })
     it('supports fetch api', async () => {
@@ -3455,20 +3658,22 @@ describe('BrowserWindow module', () => {
           preload: path.join(fixtures, 'api', 'isolated-fetch-preload.js')
         }
       })
+      const p = emittedOnce(ipcMain, 'isolated-fetch-error')
       fetchWindow.loadURL('about:blank')
-      const [, error] = await emittedOnce(ipcMain, 'isolated-fetch-error')
+      const [, error] = await p
       fetchWindow.destroy()
       assert.strictEqual(error, 'Failed to fetch')
     })
     it('doesn\'t break ipc serialization', async () => {
+      const p = emittedOnce(ipcMain, 'isolated-world')
       iw.loadURL('about:blank')
       iw.webContents.executeJavaScript(`
         const opened = window.open()
-        openedLocation = opened.location
+        openedLocation = opened.location.href
         opened.close()
         window.postMessage({openedLocation}, '*')
       `)
-      const [, data] = await emittedOnce(ipcMain, 'isolated-world')
+      const [, data] = await p
       assert.strictEqual(data.pageContext.openedLocation, '')
     })
   })
@@ -3497,10 +3702,15 @@ describe('BrowserWindow module', () => {
       w.webContents.once('paint', function (event, rect, data) {
         assert.notStrictEqual(data.length, 0)
         const size = data.getSize()
-        assertWithinDelta(size.width, 100, 2, 'width')
-        assertWithinDelta(size.height, 100, 2, 'height')
+        assertWithinDelta(size.width, 100 * devicePixelRatio, 2, 'width')
+        assertWithinDelta(size.height, 100 * devicePixelRatio, 2, 'height')
         done()
       })
+      w.loadFile(path.join(fixtures, 'api', 'offscreen-rendering.html'))
+    })
+
+    it('does not crash after navigation', () => {
+      w.webContents.loadURL('about:blank')
       w.loadFile(path.join(fixtures, 'api', 'offscreen-rendering.html'))
     })
 

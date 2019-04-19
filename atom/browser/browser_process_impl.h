@@ -86,8 +86,8 @@ class BrowserProcessImpl : public BrowserProcess {
   safe_browsing::SafeBrowsingService* safe_browsing_service() override;
   safe_browsing::ClientSideDetectionService* safe_browsing_detection_service()
       override;
-  subresource_filter::ContentRulesetService*
-  subresource_filter_ruleset_service() override;
+  subresource_filter::RulesetService* subresource_filter_ruleset_service()
+      override;
   optimization_guide::OptimizationGuideService* optimization_guide_service()
       override;
   net_log::ChromeNetLog* net_log() override;
@@ -98,11 +98,12 @@ class BrowserProcessImpl : public BrowserProcess {
   WebRtcLogUploader* webrtc_log_uploader() override;
   network_time::NetworkTimeTracker* network_time_tracker() override;
   gcm::GCMDriver* gcm_driver() override;
+  resource_coordinator::ResourceCoordinatorParts* resource_coordinator_parts()
+      override;
   resource_coordinator::TabManager* GetTabManager() override;
   shell_integration::DefaultWebClientState CachedDefaultWebClientState()
       override;
   prefs::InProcessPrefServiceFactory* pref_service_factory() const override;
-  content::NetworkConnectionTracker* network_connection_tracker() override;
   void CreateDevToolsProtocolHandler() override {}
   void CreateDevToolsAutoOpener() override {}
   void set_background_mode_manager_for_test(
@@ -121,7 +122,6 @@ class BrowserProcessImpl : public BrowserProcess {
   std::unique_ptr<PrefService> local_state_;
   std::unique_ptr<IOThread> io_thread_;
   std::unique_ptr<net_log::ChromeNetLog> net_log_;
-  std::unique_ptr<SystemNetworkContextManager> system_network_context_manager_;
   std::string locale_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserProcessImpl);

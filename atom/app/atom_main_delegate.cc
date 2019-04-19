@@ -8,6 +8,10 @@
 #include <memory>
 #include <string>
 
+#if defined(OS_LINUX)
+#include <glib.h>  // for g_setenv()
+#endif
+
 #include "atom/app/atom_content_client.h"
 #include "atom/browser/atom_browser_client.h"
 #include "atom/browser/relauncher.h"
@@ -155,19 +159,13 @@ bool AtomMainDelegate::BasicStartupComplete(int* exit_code) {
   // Logging with pid and timestamp.
   logging::SetLogItems(true, false, true, false);
 
-  // Enable convient stack printing.
-#if defined(DEBUG) && defined(OS_LINUX)
-  bool enable_stack_dumping = true;
-#else
-  bool enable_stack_dumping = env->HasVar("ELECTRON_ENABLE_STACK_DUMPING");
-#endif
-#if defined(ARCH_CPU_ARM_FAMILY) && defined(ARCH_CPU_32_BITS)
-  // For 32bit ARM enabling stack printing would end up crashing.
-  // https://github.com/electron/electron/pull/11230#issuecomment-363232482
-  enable_stack_dumping = false;
-#endif
-  if (enable_stack_dumping)
+  // Enable convient stack printing. This is enabled by default in non-official
+  // builds.
+  if (env->HasVar("ELECTRON_ENABLE_STACK_DUMPING"))
     base::debug::EnableInProcessStackDumping();
+
+  if (env->HasVar("ELECTRON_DISABLE_SANDBOX"))
+    command_line->AppendSwitch(service_manager::switches::kNoSandbox);
 
   chrome::RegisterPathProvider();
 
@@ -191,6 +189,36 @@ bool AtomMainDelegate::BasicStartupComplete(int* exit_code) {
   return false;
 }
 
+void AtomMainDelegate::PostEarlyInitialization(bool is_running_tests) {
+  std::string custom_locale;
+  ui::ResourceBundle::InitSharedInstanceWithLocale(
+      custom_locale, nullptr, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
+  auto* cmd_line = base::CommandLine::ForCurrentProcess();
+  if (cmd_line->HasSwitch(::switches::kLang)) {
+    const std::string locale = cmd_line->GetSwitchValueASCII(::switches::kLang);
+    const base::FilePath locale_file_path =
+        ui::ResourceBundle::GetSharedInstance().GetLocaleFilePath(locale, true);
+    if (!locale_file_path.empty()) {
+      custom_locale = locale;
+#if defined(OS_LINUX)
+      /* When built with USE_GLIB, libcc's GetApplicationLocaleInternal() uses
+       * glib's g_get_language_names(), which keys off of getenv("LC_ALL") */
+      g_setenv("LC_ALL", custom_locale.c_str(), TRUE);
+#endif
+    }
+  }
+
+#if defined(OS_MACOSX)
+  if (custom_locale.empty())
+    l10n_util::OverrideLocaleWithCocoaLocale();
+#endif
+
+  LoadResourceBundle(custom_locale);
+
+  AtomBrowserClient::SetApplicationLocale(
+      l10n_util::GetApplicationLocale(custom_locale));
+}
+
 void AtomMainDelegate::PreSandboxStartup() {
   auto* command_line = base::CommandLine::ForCurrentProcess();
 
@@ -209,16 +237,6 @@ void AtomMainDelegate::PreSandboxStartup() {
   if (!IsBrowserProcess(command_line))
     return;
 
-  // Disable setuid sandbox since it is not longer required on
-  // linux (namespace sandbox is available on most distros).
-  command_line->AppendSwitch(service_manager::switches::kDisableSetuidSandbox);
-
-  if (!command_line->HasSwitch(switches::kEnableMixedSandbox) &&
-      !command_line->HasSwitch(switches::kEnableSandbox)) {
-    // Disable renderer sandbox for most of node's functions.
-    command_line->AppendSwitch(service_manager::switches::kNoSandbox);
-  }
-
   // Allow file:// URIs to read other file:// URIs by default.
   command_line->AppendSwitch(::switches::kAllowFileAccessFromFiles);
 
@@ -228,7 +246,7 @@ void AtomMainDelegate::PreSandboxStartup() {
 #endif
 }
 
-void AtomMainDelegate::PreContentInitialization() {
+void AtomMainDelegate::PreCreateMainMessageLoop() {
 #if defined(OS_MACOSX)
   RegisterAtomCrApp();
 #endif
@@ -277,5 +295,13 @@ bool AtomMainDelegate::DelaySandboxInitialization(
   return process_type == kRelauncherProcess;
 }
 #endif
+
+bool AtomMainDelegate::ShouldLockSchemeRegistry() {
+  return false;
+}
+
+bool AtomMainDelegate::ShouldCreateFeatureList() {
+  return false;
+}
 
 }  // namespace atom

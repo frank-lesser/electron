@@ -43,7 +43,7 @@
   } else {
     auto* contents = inspectableWebContentsView_->inspectable_web_contents()
                          ->GetWebContents();
-    auto contentsView = contents->GetNativeView();
+    auto* contentsView = contents->GetNativeView().GetNativeNSView();
     [contentsView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [self addSubview:contentsView];
   }
@@ -63,7 +63,7 @@
 }
 
 - (IBAction)showDevTools:(id)sender {
-  inspectableWebContentsView_->inspectable_web_contents()->ShowDevTools();
+  inspectableWebContentsView_->inspectable_web_contents()->ShowDevTools(true);
 }
 
 - (void)notifyDevToolsFocused {
@@ -71,23 +71,15 @@
     inspectableWebContentsView_->GetDelegate()->DevToolsFocused();
 }
 
-- (void)setDevToolsVisible:(BOOL)visible {
+- (void)setDevToolsVisible:(BOOL)visible activate:(BOOL)activate {
   if (visible == devtools_visible_)
     return;
 
   auto* inspectable_web_contents =
       inspectableWebContentsView_->inspectable_web_contents();
-  auto* webContents = inspectable_web_contents->GetWebContents();
   auto* devToolsWebContents =
       inspectable_web_contents->GetDevToolsWebContents();
-  auto devToolsView = devToolsWebContents->GetNativeView();
-
-  if (visible && devtools_docked_) {
-    webContents->SetAllowOtherViews(true);
-    devToolsWebContents->SetAllowOtherViews(true);
-  } else if (!inspectable_web_contents->IsGuest()) {
-    webContents->SetAllowOtherViews(false);
-  }
+  auto* devToolsView = devToolsWebContents->GetNativeView().GetNativeNSView();
 
   devtools_visible_ = visible;
   if (devtools_docked_) {
@@ -106,7 +98,11 @@
     }
   } else {
     if (visible) {
-      [devtools_window_ makeKeyAndOrderFront:nil];
+      if (activate) {
+        [devtools_window_ makeKeyAndOrderFront:nil];
+      } else {
+        [devtools_window_ orderBack:nil];
+      }
     } else {
       [devtools_window_ setDelegate:nil];
       [devtools_window_ close];
@@ -127,9 +123,9 @@
   }
 }
 
-- (void)setIsDocked:(BOOL)docked {
+- (void)setIsDocked:(BOOL)docked activate:(BOOL)activate {
   // Revert to no-devtools state.
-  [self setDevToolsVisible:NO];
+  [self setDevToolsVisible:NO activate:NO];
 
   // Switch to new state.
   devtools_docked_ = docked;
@@ -138,7 +134,7 @@
         inspectableWebContentsView_->inspectable_web_contents();
     auto* devToolsWebContents =
         inspectable_web_contents->GetDevToolsWebContents();
-    auto devToolsView = devToolsWebContents->GetNativeView();
+    auto devToolsView = devToolsWebContents->GetNativeView().GetNativeNSView();
 
     auto styleMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                      NSMiniaturizableWindowMask | NSWindowStyleMaskResizable |
@@ -163,7 +159,7 @@
 
     [contentView addSubview:devToolsView];
   }
-  [self setDevToolsVisible:YES];
+  [self setDevToolsVisible:YES activate:activate];
 }
 
 - (void)setContentsResizingStrategy:
@@ -207,7 +203,7 @@
   if (!inspectable_web_contents || inspectable_web_contents->IsGuest())
     return;
   auto* webContents = inspectable_web_contents->GetWebContents();
-  auto webContentsView = webContents->GetNativeView();
+  auto* webContentsView = webContents->GetNativeView().GetNativeNSView();
 
   NSView* view = [notification object];
   if ([[webContentsView subviews] containsObject:view]) {
@@ -219,7 +215,7 @@
       inspectable_web_contents->GetDevToolsWebContents();
   if (!devToolsWebContents)
     return;
-  auto devToolsView = devToolsWebContents->GetNativeView();
+  auto devToolsView = devToolsWebContents->GetNativeView().GetNativeNSView();
 
   if ([[devToolsView subviews] containsObject:view]) {
     devtools_is_first_responder_ = YES;

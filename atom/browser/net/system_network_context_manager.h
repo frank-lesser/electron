@@ -23,6 +23,10 @@ class URLLoaderFactory;
 class SharedURLLoaderFactory;
 }  // namespace network
 
+namespace net_log {
+class NetExportFileWriter;
+}
+
 // Responsible for creating and managing access to the system NetworkContext.
 // Lives on the UI thread. The NetworkContext this owns is intended for requests
 // not associated with a session. It stores no data on disk, and has no HTTP
@@ -36,12 +40,20 @@ class SharedURLLoaderFactory;
 // using the actual network service.
 class SystemNetworkContextManager {
  public:
-  SystemNetworkContextManager();
   ~SystemNetworkContextManager();
 
+  // Creates the global instance of SystemNetworkContextManager. If an
+  // instance already exists, this will cause a DCHECK failure.
+  static SystemNetworkContextManager* CreateInstance(PrefService* pref_service);
+
+  // Gets the global SystemNetworkContextManager instance.
+  static SystemNetworkContextManager* GetInstance();
+
+  // Destroys the global SystemNetworkContextManager instance.
+  static void DeleteInstance();
+
   // Returns default set of parameters for configuring the network service.
-  static network::mojom::NetworkContextParamsPtr
-  CreateDefaultNetworkContextParams();
+  network::mojom::NetworkContextParamsPtr CreateDefaultNetworkContextParams();
 
   // Initializes |network_context_params| as needed to set up a system
   // NetworkContext. If the network service is disabled,
@@ -71,12 +83,17 @@ class SystemNetworkContextManager {
   // that is backed by the SystemNetworkContext.
   scoped_refptr<network::SharedURLLoaderFactory> GetSharedURLLoaderFactory();
 
+  // Returns a shared global NetExportFileWriter instance.
+  net_log::NetExportFileWriter* GetNetExportFileWriter();
+
   // Called when content creates a NetworkService. Creates the
   // SystemNetworkContext, if the network service is enabled.
   void OnNetworkServiceCreated(network::mojom::NetworkService* network_service);
 
  private:
   class URLLoaderFactoryForSystem;
+
+  explicit SystemNetworkContextManager(PrefService* pref_service);
 
   // Creates parameters for the NetworkContext. May only be called once, since
   // it initializes some class members.
@@ -97,6 +114,9 @@ class SystemNetworkContextManager {
   // consumers don't all need to create their own factory.
   scoped_refptr<URLLoaderFactoryForSystem> shared_url_loader_factory_;
   network::mojom::URLLoaderFactoryPtr url_loader_factory_;
+
+  // Initialized on first access.
+  std::unique_ptr<net_log::NetExportFileWriter> net_export_file_writer_;
 
   DISALLOW_COPY_AND_ASSIGN(SystemNetworkContextManager);
 };

@@ -82,8 +82,13 @@ void NativeWindow::InitFromOptions(const mate::Dictionary& options) {
   } else if (options.Get(options::kCenter, &center) && center) {
     Center();
   }
+
+  bool use_content_size = false;
+  options.Get(options::kUseContentSize, &use_content_size);
+
   // On Linux and Window we may already have maximum size defined.
-  extensions::SizeConstraints size_constraints(GetContentSizeConstraints());
+  extensions::SizeConstraints size_constraints(
+      use_content_size ? GetContentSizeConstraints() : GetSizeConstraints());
   int min_height = 0, min_width = 0;
   if (options.Get(options::kMinHeight, &min_height) |
       options.Get(options::kMinWidth, &min_width)) {
@@ -94,8 +99,6 @@ void NativeWindow::InitFromOptions(const mate::Dictionary& options) {
       options.Get(options::kMaxWidth, &max_width)) {
     size_constraints.set_maximum_size(gfx::Size(max_width, max_height));
   }
-  bool use_content_size = false;
-  options.Get(options::kUseContentSize, &use_content_size);
   if (use_content_size) {
     SetContentSizeConstraints(size_constraints);
   } else {
@@ -540,10 +543,9 @@ void NativeWindow::NotifyWindowAlwaysOnTopChanged() {
     observer.OnWindowAlwaysOnTopChanged();
 }
 
-void NativeWindow::NotifyWindowExecuteWindowsCommand(
-    const std::string& command) {
+void NativeWindow::NotifyWindowExecuteAppCommand(const std::string& command) {
   for (NativeWindowObserver& observer : observers_)
-    observer.OnExecuteWindowsCommand(command);
+    observer.OnExecuteAppCommand(command);
 }
 
 void NativeWindow::NotifyTouchBarItemInteraction(
@@ -576,22 +578,21 @@ const views::Widget* NativeWindow::GetWidget() const {
 }
 
 // static
-const void* const NativeWindowRelay::kNativeWindowRelayUserDataKey =
-    &NativeWindowRelay::kNativeWindowRelayUserDataKey;
-
-// static
 void NativeWindowRelay::CreateForWebContents(
     content::WebContents* web_contents,
     base::WeakPtr<NativeWindow> window) {
   DCHECK(web_contents);
-  DCHECK(!web_contents->GetUserData(kNativeWindowRelayUserDataKey));
-  web_contents->SetUserData(kNativeWindowRelayUserDataKey,
-                            base::WrapUnique(new NativeWindowRelay(window)));
+  if (!web_contents->GetUserData(UserDataKey())) {
+    web_contents->SetUserData(UserDataKey(),
+                              base::WrapUnique(new NativeWindowRelay(window)));
+  }
 }
 
 NativeWindowRelay::NativeWindowRelay(base::WeakPtr<NativeWindow> window)
     : native_window_(window) {}
 
 NativeWindowRelay::~NativeWindowRelay() = default;
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(NativeWindowRelay)
 
 }  // namespace atom

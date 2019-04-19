@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "atom/browser/api/event_emitter.h"
+#include "atom/browser/api/trackable_object.h"
 #include "chrome/browser/media/webrtc/desktop_media_list_observer.h"
 #include "chrome/browser/media/webrtc/native_desktop_media_list.h"
 #include "native_mate/handle.h"
@@ -18,13 +18,16 @@ namespace atom {
 
 namespace api {
 
-class DesktopCapturer : public mate::EventEmitter<DesktopCapturer>,
+class DesktopCapturer : public mate::TrackableObject<DesktopCapturer>,
                         public DesktopMediaListObserver {
  public:
   struct Source {
     DesktopMediaList::Source media_list_source;
     // Will be an empty string if not available.
     std::string display_id;
+
+    // Whether or not this source should provide an icon.
+    bool fetch_icon = false;
   };
 
   static mate::Handle<DesktopCapturer> Create(v8::Isolate* isolate);
@@ -34,7 +37,8 @@ class DesktopCapturer : public mate::EventEmitter<DesktopCapturer>,
 
   void StartHandling(bool capture_window,
                      bool capture_screen,
-                     const gfx::Size& thumbnail_size);
+                     const gfx::Size& thumbnail_size,
+                     bool fetch_window_icons);
 
  protected:
   explicit DesktopCapturer(v8::Isolate* isolate);
@@ -59,6 +63,7 @@ class DesktopCapturer : public mate::EventEmitter<DesktopCapturer>,
   std::vector<DesktopCapturer::Source> captured_sources_;
   bool capture_window_ = false;
   bool capture_screen_ = false;
+  bool fetch_window_icons_ = false;
 #if defined(OS_WIN)
   bool using_directx_capturer_ = false;
 #endif  // defined(OS_WIN)

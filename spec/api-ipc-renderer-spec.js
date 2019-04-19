@@ -5,7 +5,6 @@ const dirtyChai = require('dirty-chai')
 const http = require('http')
 const path = require('path')
 const { closeWindow } = require('./window-helpers')
-const { emittedOnce } = require('./events-helpers')
 
 const { expect } = chai
 chai.use(dirtyChai)
@@ -139,68 +138,64 @@ describe('ipc renderer module', () => {
       contents = null
     })
 
-    it('sends message to WebContents', done => {
-      contents = webContents.create({
-        preload: path.join(fixtures, 'module', 'preload-inject-ipc.js')
+    const generateSpecs = (description, webPreferences) => {
+      describe(description, () => {
+        it('sends message to WebContents', done => {
+          contents = webContents.create({
+            preload: path.join(fixtures, 'module', 'preload-ipc-ping-pong.js'),
+            ...webPreferences
+          })
+
+          const payload = 'Hello World!'
+
+          ipcRenderer.once('pong', (event, data) => {
+            expect(payload).to.equal(data)
+            done()
+          })
+
+          contents.once('did-finish-load', () => {
+            ipcRenderer.sendTo(contents.id, 'ping', payload)
+          })
+
+          contents.loadFile(path.join(fixtures, 'pages', 'base-page.html'))
+        })
+
+        it('sends message to WebContents (channel has special chars)', done => {
+          contents = webContents.create({
+            preload: path.join(fixtures, 'module', 'preload-ipc-ping-pong.js'),
+            ...webPreferences
+          })
+
+          const payload = 'Hello World!'
+
+          ipcRenderer.once('pong-æøåü', (event, data) => {
+            expect(payload).to.equal(data)
+            done()
+          })
+
+          contents.once('did-finish-load', () => {
+            ipcRenderer.sendTo(contents.id, 'ping-æøåü', payload)
+          })
+
+          contents.loadFile(path.join(fixtures, 'pages', 'base-page.html'))
+        })
       })
+    }
 
-      const payload = 'Hello World!'
-
-      ipcRenderer.once('pong', (event, data) => {
-        expect(payload).to.equal(data)
-        done()
-      })
-
-      contents.once('did-finish-load', () => {
-        ipcRenderer.sendTo(contents.id, 'ping', payload)
-      })
-
-      contents.loadFile(path.join(fixtures, 'pages', 'ping-pong.html'))
-    })
-
-    it('sends message to WebContents (sanboxed renderer)', done => {
-      contents = webContents.create({
-        preload: path.join(fixtures, 'module', 'preload-inject-ipc.js'),
-        sandbox: true
-      })
-
-      const payload = 'Hello World!'
-
-      ipcRenderer.once('pong', (event, data) => {
-        expect(payload).to.equal(data)
-        done()
-      })
-
-      contents.once('did-finish-load', () => {
-        ipcRenderer.sendTo(contents.id, 'ping', payload)
-      })
-
-      contents.loadFile(path.join(fixtures, 'pages', 'ping-pong.html'))
-    })
-
-    it('sends message to WebContents (channel has special chars)', done => {
-      contents = webContents.create({
-        preload: path.join(fixtures, 'module', 'preload-inject-ipc.js')
-      })
-
-      const payload = 'Hello World!'
-
-      ipcRenderer.once('pong-æøåü', (event, data) => {
-        expect(payload).to.equal(data)
-        done()
-      })
-
-      contents.once('did-finish-load', () => {
-        ipcRenderer.sendTo(contents.id, 'ping-æøåü', payload)
-      })
-
-      contents.loadFile(path.join(fixtures, 'pages', 'ping-pong.html'))
-    })
+    generateSpecs('without sandbox', {})
+    generateSpecs('with sandbox', { sandbox: true })
+    generateSpecs('with contextIsolation', { contextIsolation: true })
+    generateSpecs('with contextIsolation + sandbox', { contextIsolation: true, sandbox: true })
   })
 
   describe('remote listeners', () => {
     it('detaches listeners subscribed to destroyed renderers, and shows a warning', (done) => {
-      w = new BrowserWindow({ show: false })
+      w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
 
       w.webContents.once('did-finish-load', () => {
         w.webContents.once('did-finish-load', () => {
@@ -228,10 +223,13 @@ describe('ipc renderer module', () => {
 
   describe('ipcRenderer.on', () => {
     it('is not used for internals', async () => {
-      w = new BrowserWindow({ show: false })
-      w.loadURL('about:blank')
-
-      await emittedOnce(w.webContents, 'did-finish-load')
+      w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: true
+        }
+      })
+      await w.loadURL('about:blank')
 
       const script = `require('electron').ipcRenderer.eventNames()`
       const result = await w.webContents.executeJavaScript(script)

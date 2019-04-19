@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "atom/common/native_mate_converters/callback.h"
+#include "base/stl_util.h"
+#include "content/public/browser/browser_thread.h"
 
 #include "native_mate/dictionary.h"
 
@@ -42,16 +44,19 @@ void CallTranslater(v8::Local<v8::External> external,
                     mate::Arguments* args) {
   // Whether the callback should only be called for once.
   v8::Isolate* isolate = args->isolate();
-  bool one_time = state->Has(mate::StringToSymbol(isolate, "oneTime"));
+  auto context = isolate->GetCurrentContext();
+  bool one_time =
+      state->Has(context, mate::StringToSymbol(isolate, "oneTime")).ToChecked();
 
   // Check if the callback has already been called.
   if (one_time) {
     auto called_symbol = mate::StringToSymbol(isolate, "called");
-    if (state->Has(called_symbol)) {
+    if (state->Has(context, called_symbol).ToChecked()) {
       args->ThrowError("callback can only be called for once");
       return;
     } else {
-      state->Set(called_symbol, v8::Boolean::New(isolate, true));
+      state->Set(context, called_symbol, v8::Boolean::New(isolate, true))
+          .ToChecked();
     }
   }
 
@@ -129,9 +134,10 @@ v8::Local<v8::Value> CreateFunctionFromTranslater(v8::Isolate* isolate,
   Dictionary state = mate::Dictionary::CreateEmpty(isolate);
   if (one_time)
     state.Set("oneTime", true);
-  return BindFunctionWith(isolate, isolate->GetCurrentContext(),
-                          call_translater->GetFunction(),
-                          holder->handle.Get(isolate), state.GetHandle());
+  auto context = isolate->GetCurrentContext();
+  return BindFunctionWith(
+      isolate, context, call_translater->GetFunction(context).ToLocalChecked(),
+      holder->handle.Get(isolate), state.GetHandle());
 }
 
 // func.bind(func, arg1).
@@ -146,7 +152,7 @@ v8::Local<v8::Value> BindFunctionWith(v8::Isolate* isolate,
   v8::Local<v8::Function> bind_func =
       v8::Local<v8::Function>::Cast(bind.ToLocalChecked());
   v8::Local<v8::Value> converted[] = {func, arg1, arg2};
-  return bind_func->Call(context, func, arraysize(converted), converted)
+  return bind_func->Call(context, func, base::size(converted), converted)
       .ToLocalChecked();
 }
 

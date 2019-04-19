@@ -16,6 +16,7 @@
 #include "atom/browser/atom_paths.h"
 #include "atom/browser/login_handler.h"
 #include "atom/browser/relauncher.h"
+#include "atom/common/application_info.h"
 #include "atom/common/atom_command_line.h"
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
@@ -24,19 +25,19 @@
 #include "atom/common/native_mate_converters/net_converter.h"
 #include "atom/common/native_mate_converters/network_converter.h"
 #include "atom/common/native_mate_converters/value_converter.h"
+#include "atom/common/node_includes.h"
 #include "atom/common/options_switches.h"
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/strings/string_util.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/icon_manager.h"
 #include "chrome/common/chrome_paths.h"
-#include "content/browser/gpu/compositor_util.h"
-#include "content/browser/gpu/gpu_data_manager_impl.h"
+#include "content/browser/gpu/compositor_util.h"        // nogncheck
+#include "content/browser/gpu/gpu_data_manager_impl.h"  // nogncheck
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
@@ -48,16 +49,9 @@
 #include "native_mate/object_template_builder.h"
 #include "net/ssl/client_cert_identity.h"
 #include "net/ssl/ssl_cert_request_info.h"
-#include "services/network/public/cpp/network_switches.h"
 #include "services/service_manager/sandbox/switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
-
-// clang-format off
-// This header should be declared at the end to avoid
-// redefinition errors.
-#include "atom/common/node_includes.h"  // NOLINT(build/include_alpha)
-// clang-format on
 
 #if defined(OS_WIN)
 #include "atom/browser/ui/win/jump_list.h"
@@ -535,18 +529,11 @@ int ImportIntoCertStore(CertificateManagerModel* model,
 }
 #endif
 
-void OnIconDataAvailable(v8::Isolate* isolate,
-                         const App::FileIconCallback& callback,
-                         gfx::Image* icon) {
-  v8::Locker locker(isolate);
-  v8::HandleScope handle_scope(isolate);
-
+void OnIconDataAvailable(util::Promise promise, gfx::Image* icon) {
   if (icon && !icon->IsEmpty()) {
-    callback.Run(v8::Null(isolate), *icon);
+    promise.Resolve(*icon);
   } else {
-    v8::Local<v8::String> error_message =
-        v8::String::NewFromUtf8(isolate, "Failed to get file icon.");
-    callback.Run(v8::Exception::Error(error_message), gfx::Image());
+    promise.RejectWithErrorMessage("Failed to get file icon.");
   }
 }
 
@@ -698,7 +685,7 @@ bool App::CanCreateWindow(
     content::RenderFrameHost* opener,
     const GURL& opener_url,
     const GURL& opener_top_level_frame_url,
-    const GURL& source_origin,
+    const url::Origin& source_origin,
     content::mojom::WindowContainerType container_type,
     const GURL& target_url,
     const content::Referrer& referrer,
@@ -788,24 +775,24 @@ void App::OnGpuProcessCrashed(base::TerminationStatus status) {
 
 void App::BrowserChildProcessLaunchedAndConnected(
     const content::ChildProcessData& data) {
-  ChildProcessLaunched(data.process_type, data.handle);
+  ChildProcessLaunched(data.process_type, data.GetProcess().Handle());
 }
 
 void App::BrowserChildProcessHostDisconnected(
     const content::ChildProcessData& data) {
-  ChildProcessDisconnected(base::GetProcId(data.handle));
+  ChildProcessDisconnected(base::GetProcId(data.GetProcess().Handle()));
 }
 
 void App::BrowserChildProcessCrashed(
     const content::ChildProcessData& data,
     const content::ChildProcessTerminationInfo& info) {
-  ChildProcessDisconnected(base::GetProcId(data.handle));
+  ChildProcessDisconnected(base::GetProcId(data.GetProcess().Handle()));
 }
 
 void App::BrowserChildProcessKilled(
     const content::ChildProcessData& data,
     const content::ChildProcessTerminationInfo& info) {
-  ChildProcessDisconnected(base::GetProcId(data.handle));
+  ChildProcessDisconnected(base::GetProcId(data.GetProcess().Handle()));
 }
 
 void App::RenderProcessReady(content::RenderProcessHost* host) {
@@ -843,6 +830,26 @@ base::FilePath App::GetAppPath() const {
 void App::SetAppPath(const base::FilePath& app_path) {
   app_path_ = app_path;
 }
+
+#if !defined(OS_MACOSX)
+void App::SetAppLogsPath(mate::Arguments* args) {
+  base::FilePath custom_path;
+  if (args->GetNext(&custom_path)) {
+    if (!custom_path.IsAbsolute()) {
+      args->ThrowError("Path must be absolute");
+      return;
+    }
+    base::PathService::Override(DIR_APP_LOGS, custom_path);
+  } else {
+    base::FilePath path;
+    if (base::PathService::Get(DIR_USER_DATA, &path)) {
+      path = path.Append(base::FilePath::FromUTF8Unsafe(GetApplicationName()));
+      path = path.Append(base::FilePath::FromUTF8Unsafe("logs"));
+      base::PathService::Override(DIR_APP_LOGS, path);
+    }
+  }
+}
+#endif
 
 base::FilePath App::GetPath(mate::Arguments* args, const std::string& name) {
   bool succeed = false;
@@ -1024,7 +1031,14 @@ bool App::IsAccessibilitySupportEnabled() {
   return ax_state->IsAccessibleBrowser();
 }
 
-void App::SetAccessibilitySupportEnabled(bool enabled) {
+void App::SetAccessibilitySupportEnabled(bool enabled, mate::Arguments* args) {
+  if (!Browser::Get()->is_ready()) {
+    args->ThrowError(
+        "app.setAccessibilitySupportEnabled() can only be called "
+        "after app is ready");
+    return;
+  }
+
   auto* ax_state = content::BrowserAccessibilityState::GetInstance();
   if (enabled) {
     ax_state->OnScreenReaderDetected();
@@ -1125,16 +1139,14 @@ JumpListResult App::SetJumpList(v8::Local<v8::Value> val,
 }
 #endif  // defined(OS_WIN)
 
-void App::GetFileIcon(const base::FilePath& path, mate::Arguments* args) {
-  mate::Dictionary options;
-  IconLoader::IconSize icon_size;
-  FileIconCallback callback;
-
-  v8::Locker locker(isolate());
-  v8::HandleScope handle_scope(isolate());
-
+v8::Local<v8::Promise> App::GetFileIcon(const base::FilePath& path,
+                                        mate::Arguments* args) {
+  util::Promise promise(isolate());
+  v8::Local<v8::Promise> handle = promise.GetHandle();
   base::FilePath normalized_path = path.NormalizePathSeparators();
 
+  IconLoader::IconSize icon_size;
+  mate::Dictionary options;
   if (!args->GetNext(&options)) {
     icon_size = IconLoader::IconSize::NORMAL;
   } else {
@@ -1143,26 +1155,23 @@ void App::GetFileIcon(const base::FilePath& path, mate::Arguments* args) {
     icon_size = GetIconSizeByString(icon_size_string);
   }
 
-  if (!args->GetNext(&callback)) {
-    args->ThrowError("Missing required callback function");
-    return;
-  }
-
   auto* icon_manager = AtomBrowserMainParts::Get()->GetIconManager();
   gfx::Image* icon =
       icon_manager->LookupIconFromFilepath(normalized_path, icon_size);
   if (icon) {
-    callback.Run(v8::Null(isolate()), *icon);
+    promise.Resolve(*icon);
   } else {
     icon_manager->LoadIcon(
         normalized_path, icon_size,
-        base::Bind(&OnIconDataAvailable, isolate(), callback),
+        base::BindOnce(&OnIconDataAvailable, std::move(promise)),
         &cancelable_task_tracker_);
   }
+  return handle;
 }
 
 std::vector<mate::Dictionary> App::GetAppMetrics(v8::Isolate* isolate) {
   std::vector<mate::Dictionary> result;
+  result.reserve(app_metrics_.size());
   int processor_count = base::SysInfo::NumberOfProcessors();
 
   for (const auto& process_metric : app_metrics_) {
@@ -1206,30 +1215,30 @@ v8::Local<v8::Value> App::GetGPUFeatureStatus(v8::Isolate* isolate) {
 v8::Local<v8::Promise> App::GetGPUInfo(v8::Isolate* isolate,
                                        const std::string& info_type) {
   auto* const gpu_data_manager = content::GpuDataManagerImpl::GetInstance();
-  scoped_refptr<util::Promise> promise = new util::Promise(isolate);
+  util::Promise promise(isolate);
+  v8::Local<v8::Promise> handle = promise.GetHandle();
   if (info_type != "basic" && info_type != "complete") {
-    promise->RejectWithErrorMessage(
+    promise.RejectWithErrorMessage(
         "Invalid info type. Use 'basic' or 'complete'");
-    return promise->GetHandle();
+    return handle;
   }
   std::string reason;
   if (!gpu_data_manager->GpuAccessAllowed(&reason)) {
-    promise->RejectWithErrorMessage("GPU access not allowed. Reason: " +
-                                    reason);
-    return promise->GetHandle();
+    promise.RejectWithErrorMessage("GPU access not allowed. Reason: " + reason);
+    return handle;
   }
 
   auto* const info_mgr = GPUInfoManager::GetInstance();
   if (info_type == "complete") {
 #if defined(OS_WIN) || defined(OS_MACOSX)
-    info_mgr->FetchCompleteInfo(promise);
+    info_mgr->FetchCompleteInfo(std::move(promise));
 #else
-    info_mgr->FetchBasicInfo(promise);
+    info_mgr->FetchBasicInfo(std::move(promise));
 #endif
   } else /* (info_type == "basic") */ {
-    info_mgr->FetchBasicInfo(promise);
+    info_mgr->FetchBasicInfo(std::move(promise));
   }
-  return promise->GetHandle();
+  return handle;
 }
 
 static void RemoveNoSandboxSwitch(base::CommandLine* command_line) {
@@ -1259,19 +1268,6 @@ void App::EnableSandbox(mate::Arguments* args) {
   command_line->AppendSwitch(switches::kEnableSandbox);
 }
 
-void App::EnableMixedSandbox(mate::Arguments* args) {
-  if (Browser::Get()->is_ready()) {
-    args->ThrowError(
-        "app.enableMixedSandbox() can only be called "
-        "before app is ready");
-    return;
-  }
-
-  auto* command_line = base::CommandLine::ForCurrentProcess();
-  RemoveNoSandboxSwitch(command_line);
-  command_line->AppendSwitch(switches::kEnableMixedSandbox);
-}
-
 #if defined(OS_MACOSX)
 bool App::MoveToApplicationsFolder(mate::Arguments* args) {
   return ui::cocoa::AtomBundleMover::Move(args);
@@ -1279,6 +1275,46 @@ bool App::MoveToApplicationsFolder(mate::Arguments* args) {
 
 bool App::IsInApplicationsFolder() {
   return ui::cocoa::AtomBundleMover::IsCurrentAppInApplicationsFolder();
+}
+
+int DockBounce(const std::string& type) {
+  int request_id = -1;
+  if (type == "critical")
+    request_id = Browser::Get()->DockBounce(Browser::BOUNCE_CRITICAL);
+  else if (type == "informational")
+    request_id = Browser::Get()->DockBounce(Browser::BOUNCE_INFORMATIONAL);
+  return request_id;
+}
+
+void DockSetMenu(atom::api::Menu* menu) {
+  Browser::Get()->DockSetMenu(menu->model());
+}
+
+v8::Local<v8::Value> App::GetDockAPI(v8::Isolate* isolate) {
+  if (dock_.IsEmpty()) {
+    // Initialize the Dock API, the methods are bound to "dock" which exists
+    // for the lifetime of "app"
+    auto browser = base::Unretained(Browser::Get());
+    mate::Dictionary dock_obj = mate::Dictionary::CreateEmpty(isolate);
+    dock_obj.SetMethod("bounce", &DockBounce);
+    dock_obj.SetMethod("cancelBounce",
+                       base::Bind(&Browser::DockCancelBounce, browser));
+    dock_obj.SetMethod("downloadFinished",
+                       base::Bind(&Browser::DockDownloadFinished, browser));
+    dock_obj.SetMethod("setBadge",
+                       base::Bind(&Browser::DockSetBadgeText, browser));
+    dock_obj.SetMethod("getBadge",
+                       base::Bind(&Browser::DockGetBadgeText, browser));
+    dock_obj.SetMethod("hide", base::Bind(&Browser::DockHide, browser));
+    dock_obj.SetMethod("show", base::Bind(&Browser::DockShow, browser));
+    dock_obj.SetMethod("isVisible",
+                       base::Bind(&Browser::DockIsVisible, browser));
+    dock_obj.SetMethod("setMenu", &DockSetMenu);
+    dock_obj.SetMethod("setIcon", base::Bind(&Browser::DockSetIcon, browser));
+
+    dock_.Reset(isolate, dock_obj.GetHandle());
+  }
+  return v8::Local<v8::Value>::New(isolate, dock_);
 }
 #endif
 
@@ -1319,6 +1355,8 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("getLoginItemSettings", &App::GetLoginItemSettings)
       .SetMethod("setLoginItemSettings",
                  base::Bind(&Browser::SetLoginItemSettings, browser))
+      .SetMethod("isEmojiPanelSupported",
+                 base::Bind(&Browser::IsEmojiPanelSupported, browser))
 #if defined(OS_MACOSX)
       .SetMethod("hide", base::Bind(&Browser::Hide, browser))
       .SetMethod("show", base::Bind(&Browser::Show, browser))
@@ -1340,6 +1378,13 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("showAboutPanel",
                  base::Bind(&Browser::ShowAboutPanel, browser))
 #endif
+#if defined(OS_MACOSX) || defined(OS_WIN)
+      .SetMethod("showEmojiPanel",
+                 base::Bind(&Browser::ShowEmojiPanel, browser))
+      .SetProperty("accessibilitySupportEnabled",
+                   &App::IsAccessibilitySupportEnabled,
+                   &App::SetAccessibilitySupportEnabled)
+#endif
 #if defined(OS_WIN)
       .SetMethod("setUserTasks", base::Bind(&Browser::SetUserTasks, browser))
       .SetMethod("getJumpListSettings", &App::GetJumpListSettings)
@@ -1353,6 +1398,7 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("getAppPath", &App::GetAppPath)
       .SetMethod("setPath", &App::SetPath)
       .SetMethod("getPath", &App::GetPath)
+      .SetMethod("setAppLogsPath", &App::SetAppLogsPath)
       .SetMethod("setDesktopName", &App::SetDesktopName)
       .SetMethod("getLocale", &App::GetLocale)
       .SetMethod("getLocaleCountryCode", &App::GetLocaleCountryCode)
@@ -1363,9 +1409,9 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("requestSingleInstanceLock", &App::RequestSingleInstanceLock)
       .SetMethod("releaseSingleInstanceLock", &App::ReleaseSingleInstanceLock)
       .SetMethod("relaunch", &App::Relaunch)
-      .SetMethod("isAccessibilitySupportEnabled",
+      .SetMethod("_isAccessibilitySupportEnabled",
                  &App::IsAccessibilitySupportEnabled)
-      .SetMethod("setAccessibilitySupportEnabled",
+      .SetMethod("_setAccessibilitySupportEnabled",
                  &App::SetAccessibilitySupportEnabled)
       .SetMethod("disableHardwareAcceleration",
                  &App::DisableHardwareAcceleration)
@@ -1379,8 +1425,10 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("startAccessingSecurityScopedResource",
                  &App::StartAccessingSecurityScopedResource)
 #endif
-      .SetMethod("enableSandbox", &App::EnableSandbox)
-      .SetMethod("enableMixedSandbox", &App::EnableMixedSandbox);
+#if defined(OS_MACOSX)
+      .SetProperty("dock", &App::GetDockAPI)
+#endif
+      .SetMethod("enableSandbox", &App::EnableSandbox);
 }
 
 }  // namespace api
@@ -1389,72 +1437,18 @@ void App::BuildPrototype(v8::Isolate* isolate,
 
 namespace {
 
-void AppendSwitch(const std::string& switch_string, mate::Arguments* args) {
-  auto* command_line = base::CommandLine::ForCurrentProcess();
-
-  if (base::EndsWith(switch_string, "-path",
-                     base::CompareCase::INSENSITIVE_ASCII) ||
-      switch_string == network::switches::kLogNetLog) {
-    base::FilePath path;
-    args->GetNext(&path);
-    command_line->AppendSwitchPath(switch_string, path);
-    return;
-  }
-
-  std::string value;
-  if (args->GetNext(&value))
-    command_line->AppendSwitchASCII(switch_string, value);
-  else
-    command_line->AppendSwitch(switch_string);
-}
-
-#if defined(OS_MACOSX)
-int DockBounce(const std::string& type) {
-  int request_id = -1;
-  if (type == "critical")
-    request_id = Browser::Get()->DockBounce(Browser::BOUNCE_CRITICAL);
-  else if (type == "informational")
-    request_id = Browser::Get()->DockBounce(Browser::BOUNCE_INFORMATIONAL);
-  return request_id;
-}
-
-void DockSetMenu(atom::api::Menu* menu) {
-  Browser::Get()->DockSetMenu(menu->model());
-}
-#endif
-
 void Initialize(v8::Local<v8::Object> exports,
                 v8::Local<v8::Value> unused,
                 v8::Local<v8::Context> context,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
-  auto* command_line = base::CommandLine::ForCurrentProcess();
-
   mate::Dictionary dict(isolate, exports);
-  dict.Set("App", atom::api::App::GetConstructor(isolate)->GetFunction());
+  dict.Set("App", atom::api::App::GetConstructor(isolate)
+                      ->GetFunction(context)
+                      .ToLocalChecked());
   dict.Set("app", atom::api::App::Create(isolate));
-  dict.SetMethod("appendSwitch", &AppendSwitch);
-  dict.SetMethod("appendArgument", base::Bind(&base::CommandLine::AppendArg,
-                                              base::Unretained(command_line)));
-#if defined(OS_MACOSX)
-  auto browser = base::Unretained(Browser::Get());
-  dict.SetMethod("dockBounce", &DockBounce);
-  dict.SetMethod("dockCancelBounce",
-                 base::Bind(&Browser::DockCancelBounce, browser));
-  dict.SetMethod("dockDownloadFinished",
-                 base::Bind(&Browser::DockDownloadFinished, browser));
-  dict.SetMethod("dockSetBadgeText",
-                 base::Bind(&Browser::DockSetBadgeText, browser));
-  dict.SetMethod("dockGetBadgeText",
-                 base::Bind(&Browser::DockGetBadgeText, browser));
-  dict.SetMethod("dockHide", base::Bind(&Browser::DockHide, browser));
-  dict.SetMethod("dockShow", base::Bind(&Browser::DockShow, browser));
-  dict.SetMethod("dockIsVisible", base::Bind(&Browser::DockIsVisible, browser));
-  dict.SetMethod("dockSetMenu", &DockSetMenu);
-  dict.SetMethod("dockSetIcon", base::Bind(&Browser::DockSetIcon, browser));
-#endif
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_app, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_app, Initialize)

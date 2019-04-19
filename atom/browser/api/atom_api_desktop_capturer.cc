@@ -10,10 +10,12 @@
 
 #include "atom/common/api/atom_api_native_image.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/media/webrtc/desktop_media_list.h"
+#include "chrome/browser/media/webrtc/window_icon_util.h"
 #include "content/public/browser/desktop_capture.h"
 #include "native_mate/dictionary.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_options.h"
@@ -24,8 +26,6 @@
 #include "third_party/webrtc/modules/desktop_capture/win/screen_capturer_win_directx.h"
 #include "ui/display/win/display_info.h"
 #endif  // defined(OS_WIN)
-
-#include "atom/common/node_includes.h"
 
 namespace mate {
 
@@ -42,6 +42,12 @@ struct Converter<atom::api::DesktopCapturer::Source> {
              atom::api::NativeImage::Create(
                  isolate, gfx::Image(source.media_list_source.thumbnail)));
     dict.Set("display_id", source.display_id);
+    if (source.fetch_icon) {
+      dict.Set(
+          "appIcon",
+          atom::api::NativeImage::Create(
+              isolate, gfx::Image(GetWindowIcon(source.media_list_source.id))));
+    }
     return ConvertToV8(isolate, dict);
   }
 };
@@ -60,7 +66,9 @@ DesktopCapturer::~DesktopCapturer() {}
 
 void DesktopCapturer::StartHandling(bool capture_window,
                                     bool capture_screen,
-                                    const gfx::Size& thumbnail_size) {
+                                    const gfx::Size& thumbnail_size,
+                                    bool fetch_window_icons) {
+  fetch_window_icons_ = fetch_window_icons;
 #if defined(OS_WIN)
   if (content::desktop_capture::CreateDesktopCaptureOptions()
           .allow_directx_capturer()) {
@@ -79,10 +87,6 @@ void DesktopCapturer::StartHandling(bool capture_window,
   capture_screen_ = capture_screen;
 
   {
-    // Remove this once
-    // https://bugs.chromium.org/p/chromium/issues/detail?id=795340 is fixed.
-    base::ScopedAllowBaseSyncPrimitivesForTesting
-        scoped_allow_base_sync_primitives;
     // Initialize the source list.
     // Apply the new thumbnail size and restart capture.
     if (capture_window) {
@@ -128,24 +132,26 @@ bool DesktopCapturer::ShouldScheduleNextRefresh(DesktopMediaList* list) {
 }
 
 void DesktopCapturer::UpdateSourcesList(DesktopMediaList* list) {
-  std::vector<DesktopCapturer::Source> window_sources;
   if (capture_window_ &&
       list->GetMediaListType() == content::DesktopMediaID::TYPE_WINDOW) {
     capture_window_ = false;
     const auto& media_list_sources = list->GetSources();
+    std::vector<DesktopCapturer::Source> window_sources;
+    window_sources.reserve(media_list_sources.size());
     for (const auto& media_list_source : media_list_sources) {
-      window_sources.emplace_back(
-          DesktopCapturer::Source{media_list_source, std::string()});
+      window_sources.emplace_back(DesktopCapturer::Source{
+          media_list_source, std::string(), fetch_window_icons_});
     }
     std::move(window_sources.begin(), window_sources.end(),
               std::back_inserter(captured_sources_));
   }
 
-  std::vector<DesktopCapturer::Source> screen_sources;
   if (capture_screen_ &&
       list->GetMediaListType() == content::DesktopMediaID::TYPE_SCREEN) {
     capture_screen_ = false;
     const auto& media_list_sources = list->GetSources();
+    std::vector<DesktopCapturer::Source> screen_sources;
+    screen_sources.reserve(media_list_sources.size());
     for (const auto& media_list_source : media_list_sources) {
       screen_sources.emplace_back(
           DesktopCapturer::Source{media_list_source, std::string()});
@@ -187,7 +193,7 @@ void DesktopCapturer::UpdateSourcesList(DesktopMediaList* list) {
   }
 
   if (!capture_window_ && !capture_screen_)
-    Emit("finished", captured_sources_);
+    Emit("finished", captured_sources_, fetch_window_icons_);
 }
 
 // static
@@ -221,4 +227,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_desktop_capturer, Initialize);
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_desktop_capturer, Initialize)

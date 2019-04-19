@@ -6,6 +6,85 @@ Breaking changes will be documented here, and deprecation warnings added to JS c
 
 The `FIXME` string is used in code comments to denote things that should be fixed for future releases. See https://github.com/electron/electron/search?q=fixme
 
+# Planned Breaking API Changes (6.0)
+
+## `win.setMenu(null)`
+
+```js
+// Deprecated
+win.setMenu(null)
+// Replace with
+win.removeMenu()
+```
+
+## `contentTracing.getTraceBufferUsage()`
+
+```js
+// Deprecated
+contentTracing.getTraceBufferUsage((percentage, value) => {
+  // do something
+})
+// Replace with
+contentTracing.getTraceBufferUsage().then(infoObject => {
+  // infoObject has percentage and value fields
+})
+```
+
+## `electron.screen` in renderer process
+
+```js
+// Deprecated
+require('electron').screen
+// Replace with
+require('electron').remote.screen
+```
+
+## `require` in sandboxed renderers
+
+```js
+// Deprecated
+require('child_process')
+// Replace with
+require('electron').remote.require('child_process')
+
+// Deprecated
+require('fs')
+// Replace with
+require('electron').remote.require('fs')
+
+// Deprecated
+require('os')
+// Replace with
+require('electron').remote.require('os')
+
+// Deprecated
+require('path')
+// Replace with
+require('electron').remote.require('path')
+```
+
+## `powerMonitor.querySystemIdleState`
+
+```js
+// Deprecated
+powerMonitor.querySystemIdleState(threshold, callback)
+// Replace with synchronous API
+const idleState = getSystemIdleState(threshold)
+```
+
+## `powerMonitor.querySystemIdleTime`
+
+```js
+// Deprecated
+powerMonitor.querySystemIdleTime(callback)
+// Replace with synchronous API
+const idleTime = getSystemIdleTime()
+```
+
+## Preload scripts outside of app path are not allowed
+
+For security reasons, preload scripts can only be loaded from a subpath of the [app path](app.md#appgetapppath).
+
 # Planned Breaking API Changes (5.0)
 
 ## `new BrowserWindow({ webPreferences })`
@@ -22,21 +101,43 @@ The following `webPreferences` option default values are deprecated in favor of 
 
 Child windows opened with the `nativeWindowOpen` option will always have Node.js integration disabled.
 
+## Privileged Schemes Registration
+
+Renderer process APIs `webFrame.setRegisterURLSchemeAsPrivileged` and `webFrame.registerURLSchemeAsBypassingCSP` as well as browser process API `protocol.registerStandardSchemes` have been removed.
+A new API, `protocol.registerSchemesAsPrivileged` has been added and should be used for registering custom schemes with the required privileges. Custom schemes are required to be registered before app ready.
+
+## webFrame Isolated World APIs
+
+```js
+// Deprecated
+webFrame.setIsolatedWorldContentSecurityPolicy(worldId, csp)
+webFrame.setIsolatedWorldHumanReadableName(worldId, name)
+webFrame.setIsolatedWorldSecurityOrigin(worldId, securityOrigin)
+// Replace with
+webFrame.setIsolatedWorldInfo(
+  worldId,
+  {
+    securityOrigin: 'some_origin',
+    name: 'human_readable_name',
+    csp: 'content_security_policy'
+  })
+```
+
 # Planned Breaking API Changes (4.0)
 
-The following list includes the breaking API changes planned for Electron 4.0.
+The following list includes the breaking API changes made in Electron 4.0.
 
 ## `app.makeSingleInstance`
 
 ```js
 // Deprecated
-app.makeSingleInstance(function (argv, cwd) {
-
+app.makeSingleInstance((argv, cwd) => {
+  /* ... */
 })
 // Replace with
 app.requestSingleInstanceLock()
-app.on('second-instance', function (event, argv, cwd) {
-
+app.on('second-instance', (event, argv, cwd) => {
+  /* ... */
 })
 ```
 
@@ -64,7 +165,6 @@ the module's `binding.gyp` must be true (which is the default). If this hook is
 not present, then the native module will fail to load on Windows, with an error
 message like `Cannot find module`. See the [native module
 guide](/docs/tutorial/using-native-node-modules.md) for more.
-
 
 # Breaking API Changes (3.0)
 
@@ -179,11 +279,11 @@ screen.getPrimaryDisplay().workArea
 
 ```js
 // Deprecated
-ses.setCertificateVerifyProc(function (hostname, certificate, callback) {
+ses.setCertificateVerifyProc((hostname, certificate, callback) => {
   callback(true)
 })
 // Replace with
-ses.setCertificateVerifyProc(function (request, callback) {
+ses.setCertificateVerifyProc((request, callback) => {
   callback(0)
 })
 ```

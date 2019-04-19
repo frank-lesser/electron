@@ -10,13 +10,12 @@
 
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/value_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/web_contents.h"
 #include "native_mate/dictionary.h"
-
-#include "atom/common/node_includes.h"
 
 using content::DevToolsAgentHost;
 
@@ -45,7 +44,8 @@ void Debugger::DispatchProtocolMessage(DevToolsAgentHost* agent_host,
   v8::Locker locker(isolate());
   v8::HandleScope handle_scope(isolate());
 
-  std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> parsed_message =
+      base::JSONReader::ReadDeprecated(message);
   if (!parsed_message || !parsed_message->is_dict())
     return;
   base::DictionaryValue* dict =
@@ -61,23 +61,26 @@ void Debugger::DispatchProtocolMessage(DevToolsAgentHost* agent_host,
       params.Swap(params_value);
     Emit("message", method, params);
   } else {
-    auto send_command_callback = pending_requests_[id];
-    pending_requests_.erase(id);
-    if (send_command_callback.is_null())
+    auto it = pending_requests_.find(id);
+    if (it == pending_requests_.end())
       return;
-    base::DictionaryValue* error_body = nullptr;
-    base::DictionaryValue error;
-    bool has_error;
-    if ((has_error = dict->GetDictionary("error", &error_body))) {
-      error.Swap(error_body);
-    }
 
-    base::DictionaryValue* result_body = nullptr;
-    base::DictionaryValue result;
-    if (dict->GetDictionary("result", &result_body))
-      result.Swap(result_body);
-    send_command_callback.Run(has_error ? error.Clone() : base::Value(),
-                              result);
+    atom::util::Promise promise = std::move(it->second);
+    pending_requests_.erase(it);
+
+    base::DictionaryValue* error = nullptr;
+    if (dict->GetDictionary("error", &error)) {
+      std::string message;
+      error->GetString("message", &message);
+      promise.RejectWithErrorMessage(message);
+    } else {
+      base::DictionaryValue* result_body = nullptr;
+      base::DictionaryValue result;
+      if (dict->GetDictionary("result", &result_body)) {
+        result.Swap(result_body);
+      }
+      promise.Resolve(result);
+    }
   }
 }
 
@@ -125,23 +128,27 @@ void Debugger::Detach() {
   AgentHostClosed(agent_host_.get());
 }
 
-void Debugger::SendCommand(mate::Arguments* args) {
-  if (!agent_host_)
-    return;
+v8::Local<v8::Promise> Debugger::SendCommand(mate::Arguments* args) {
+  atom::util::Promise promise(isolate());
+  v8::Local<v8::Promise> handle = promise.GetHandle();
+
+  if (!agent_host_) {
+    promise.RejectWithErrorMessage("No target available");
+    return handle;
+  }
 
   std::string method;
   if (!args->GetNext(&method)) {
-    args->ThrowError();
-    return;
+    promise.RejectWithErrorMessage("Invalid method");
+    return handle;
   }
+
   base::DictionaryValue command_params;
   args->GetNext(&command_params);
-  SendCommandCallback callback;
-  args->GetNext(&callback);
 
   base::DictionaryValue request;
   int request_id = ++previous_request_id_;
-  pending_requests_[request_id] = callback;
+  pending_requests_.emplace(request_id, std::move(promise));
   request.SetInteger("id", request_id);
   request.SetString("method", method);
   if (!command_params.empty())
@@ -151,16 +158,13 @@ void Debugger::SendCommand(mate::Arguments* args) {
   std::string json_args;
   base::JSONWriter::Write(request, &json_args);
   agent_host_->DispatchProtocolMessage(this, json_args);
+
+  return handle;
 }
 
 void Debugger::ClearPendingRequests() {
-  if (pending_requests_.empty())
-    return;
-  base::Value error(base::Value::Type::DICTIONARY);
-  base::Value error_msg("target closed while handling command");
-  error.SetKey("message", std::move(error_msg));
-  for (const auto& it : pending_requests_)
-    it.second.Run(error, base::Value());
+  for (auto& it : pending_requests_)
+    it.second.RejectWithErrorMessage("target closed while handling command");
 }
 
 // static
@@ -194,9 +198,11 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
   mate::Dictionary(isolate, exports)
-      .Set("Debugger", Debugger::GetConstructor(isolate)->GetFunction());
+      .Set("Debugger", Debugger::GetConstructor(isolate)
+                           ->GetFunction(context)
+                           .ToLocalChecked());
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_debugger, Initialize);
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_debugger, Initialize)

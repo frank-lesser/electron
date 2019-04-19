@@ -18,6 +18,7 @@
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/promise_util.h"
 #include "base/process/process_iterator.h"
+#include "base/process/process_metrics.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/icon_manager.h"
 #include "chrome/browser/process_singleton.h"
@@ -141,7 +142,7 @@ class App : public AtomBrowserClient::Delegate,
   bool CanCreateWindow(content::RenderFrameHost* opener,
                        const GURL& opener_url,
                        const GURL& opener_top_level_frame_url,
-                       const GURL& source_origin,
+                       const url::Origin& source_origin,
                        content::mojom::WindowContainerType container_type,
                        const GURL& target_url,
                        const content::Referrer& referrer,
@@ -174,6 +175,8 @@ class App : public AtomBrowserClient::Delegate,
   void ChildProcessLaunched(int process_type, base::ProcessHandle handle);
   void ChildProcessDisconnected(base::ProcessId pid);
 
+  void SetAppLogsPath(mate::Arguments* args);
+
   // Get/Set the pre-defined path in PathService.
   base::FilePath GetPath(mate::Arguments* args, const std::string& name);
   void SetPath(mate::Arguments* args,
@@ -192,25 +195,28 @@ class App : public AtomBrowserClient::Delegate,
   void DisableHardwareAcceleration(mate::Arguments* args);
   void DisableDomainBlockingFor3DAPIs(mate::Arguments* args);
   bool IsAccessibilitySupportEnabled();
-  void SetAccessibilitySupportEnabled(bool enabled);
+  void SetAccessibilitySupportEnabled(bool enabled, mate::Arguments* args);
   Browser::LoginItemSettings GetLoginItemSettings(mate::Arguments* args);
 #if defined(USE_NSS_CERTS)
   void ImportCertificate(const base::DictionaryValue& options,
                          const net::CompletionCallback& callback);
 #endif
-  void GetFileIcon(const base::FilePath& path, mate::Arguments* args);
+  v8::Local<v8::Promise> GetFileIcon(const base::FilePath& path,
+                                     mate::Arguments* args);
 
   std::vector<mate::Dictionary> GetAppMetrics(v8::Isolate* isolate);
   v8::Local<v8::Value> GetGPUFeatureStatus(v8::Isolate* isolate);
   v8::Local<v8::Promise> GetGPUInfo(v8::Isolate* isolate,
                                     const std::string& info_type);
   void EnableSandbox(mate::Arguments* args);
-  void EnableMixedSandbox(mate::Arguments* args);
 
 #if defined(OS_MACOSX)
   bool MoveToApplicationsFolder(mate::Arguments* args);
   bool IsInApplicationsFolder();
+  v8::Local<v8::Value> GetDockAPI(v8::Isolate* isolate);
+  v8::Global<v8::Value> dock_;
 #endif
+
 #if defined(MAS_BUILD)
   base::Callback<void()> StartAccessingSecurityScopedResource(
       mate::Arguments* args);

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "atom/browser/atom_browser_client.h"
 #include "atom/browser/atom_browser_context.h"
 #include "atom/browser/native_window.h"
 #include "atom/browser/ui/file_dialog.h"
@@ -19,18 +20,19 @@
 #include "atom/common/options_switches.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
-#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/security_state/content/content_utils.h"
 #include "components/security_state/core/security_state.h"
-#include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/renderer_host/render_widget_host_view_base.h"  // nogncheck
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -39,8 +41,12 @@
 #include "printing/buildflags/buildflags.h"
 #include "storage/browser/fileapi/isolated_context.h"
 
+#if BUILDFLAG(ENABLE_COLOR_CHOOSER)
+#include "chrome/browser/ui/color_chooser.h"
+#endif
+
 #if BUILDFLAG(ENABLE_OSR)
-#include "atom/browser/osr/osr_render_widget_host_view.h"
+#include "atom/browser/osr/osr_web_contents_view.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -120,14 +126,16 @@ std::unique_ptr<base::DictionaryValue> CreateFileSystemValue(
 }
 
 void WriteToFile(const base::FilePath& path, const std::string& content) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   DCHECK(!path.empty());
 
   base::WriteFile(path, content.data(), content.size());
 }
 
 void AppendToFile(const base::FilePath& path, const std::string& content) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   DCHECK(!path.empty());
 
   base::AppendToFile(path, content.data(), content.size());
@@ -181,13 +189,14 @@ void CommonWebContentsDelegate::InitWithWebContents(
 #if BUILDFLAG(ENABLE_PRINTING)
   PrintPreviewMessageHandler::CreateForWebContents(web_contents);
   printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
-  printing::CreateCompositeClientIfNeeded(web_contents);
+  printing::CreateCompositeClientIfNeeded(web_contents,
+                                          browser_context->GetUserAgent());
 #endif
 
   // Determien whether the WebContents is offscreen.
   auto* web_preferences = WebContentsPreferences::From(web_contents);
   offscreen_ =
-      !web_preferences || web_preferences->IsEnabled(options::kOffscreen);
+      web_preferences && web_preferences->IsEnabled(options::kOffscreen);
 
   // Create InspectableWebContents.
   web_contents_.reset(InspectableWebContents::Create(
@@ -204,20 +213,19 @@ void CommonWebContentsDelegate::SetOwnerWindow(
     NativeWindow* owner_window) {
   if (owner_window) {
     owner_window_ = owner_window->GetWeakPtr();
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS)
     autofill_popup_.reset(new AutofillPopup());
 #endif
     NativeWindowRelay::CreateForWebContents(web_contents,
                                             owner_window->GetWeakPtr());
   } else {
     owner_window_ = nullptr;
-    web_contents->RemoveUserData(
-        NativeWindowRelay::kNativeWindowRelayUserDataKey);
+    web_contents->RemoveUserData(NativeWindowRelay::UserDataKey());
   }
 #if BUILDFLAG(ENABLE_OSR)
-  auto* osr_rwhv = GetOffScreenRenderWidgetHostView();
-  if (osr_rwhv)
-    osr_rwhv->SetNativeWindow(owner_window);
+  auto* osr_wcv = GetOffScreenWebContentsView();
+  if (osr_wcv)
+    osr_wcv->SetNativeWindow(owner_window);
 #endif
 }
 
@@ -256,8 +264,8 @@ content::WebContents* CommonWebContentsDelegate::GetDevToolsWebContents()
 }
 
 #if BUILDFLAG(ENABLE_OSR)
-OffScreenRenderWidgetHostView*
-CommonWebContentsDelegate::GetOffScreenRenderWidgetHostView() const {
+OffScreenWebContentsView*
+CommonWebContentsDelegate::GetOffScreenWebContentsView() const {
   return nullptr;
 }
 #endif
@@ -272,6 +280,7 @@ content::WebContents* CommonWebContentsDelegate::OpenURLFromTab(
   load_url_params.should_replace_current_entry =
       params.should_replace_current_entry;
   load_url_params.is_renderer_initiated = params.is_renderer_initiated;
+  load_url_params.initiator_origin = params.initiator_origin;
   load_url_params.should_clear_history_list = true;
 
   source->GetController().LoadURLWithParams(load_url_params);
@@ -295,18 +304,21 @@ content::ColorChooser* CommonWebContentsDelegate::OpenColorChooser(
 
 void CommonWebContentsDelegate::RunFileChooser(
     content::RenderFrameHost* render_frame_host,
-    const content::FileChooserParams& params) {
+    std::unique_ptr<content::FileSelectListener> listener,
+    const blink::mojom::FileChooserParams& params) {
   if (!web_dialog_helper_)
     web_dialog_helper_.reset(new WebDialogHelper(owner_window(), offscreen_));
-  web_dialog_helper_->RunFileChooser(render_frame_host, params);
+  web_dialog_helper_->RunFileChooser(render_frame_host, std::move(listener),
+                                     params);
 }
 
-void CommonWebContentsDelegate::EnumerateDirectory(content::WebContents* guest,
-                                                   int request_id,
-                                                   const base::FilePath& path) {
+void CommonWebContentsDelegate::EnumerateDirectory(
+    content::WebContents* guest,
+    std::unique_ptr<content::FileSelectListener> listener,
+    const base::FilePath& path) {
   if (!web_dialog_helper_)
     web_dialog_helper_.reset(new WebDialogHelper(owner_window(), offscreen_));
-  web_dialog_helper_->EnumerateDirectory(guest, request_id, path);
+  web_dialog_helper_->EnumerateDirectory(guest, std::move(listener), path);
 }
 
 void CommonWebContentsDelegate::EnterFullscreenModeForTab(
@@ -346,6 +358,19 @@ blink::WebSecurityStyle CommonWebContentsDelegate::GetSecurityStyle(
                                           security_style_explanations);
 }
 
+bool CommonWebContentsDelegate::TakeFocus(content::WebContents* source,
+                                          bool reverse) {
+  if (source && source->GetOutermostWebContents() == source) {
+    // If this is the outermost web contents and the user has tabbed or
+    // shift + tabbed through all the elements, reset the focus back to
+    // the first or last element so that it doesn't stay in the body.
+    source->FocusThroughTabTraversal(reverse);
+    return true;
+  }
+
+  return false;
+}
+
 void CommonWebContentsDelegate::DevToolsSaveToFile(const std::string& url,
                                                    const std::string& content,
                                                    bool save_as) {
@@ -359,7 +384,7 @@ void CommonWebContentsDelegate::DevToolsSaveToFile(const std::string& url,
     settings.force_detached = offscreen_;
     settings.title = url;
     settings.default_path = base::FilePath::FromUTF8Unsafe(url);
-    if (!file_dialog::ShowSaveDialog(settings, &path)) {
+    if (!file_dialog::ShowSaveDialogSync(settings, &path)) {
       base::Value url_value(url);
       web_contents_->CallClientFunction("DevToolsAPI.canceledSaveURL",
                                         &url_value, nullptr, nullptr);
@@ -431,7 +456,7 @@ void CommonWebContentsDelegate::DevToolsAddFileSystem(
     settings.parent_window = owner_window();
     settings.force_detached = offscreen_;
     settings.properties = file_dialog::FILE_DIALOG_OPEN_DIRECTORY;
-    if (!file_dialog::ShowOpenDialog(settings, &paths))
+    if (!file_dialog::ShowOpenDialogSync(settings, &paths))
       return;
 
     path = paths[0];
@@ -485,7 +510,7 @@ void CommonWebContentsDelegate::DevToolsIndexPath(
     return;
   std::vector<std::string> excluded_folders;
   std::unique_ptr<base::Value> parsed_excluded_folders =
-      base::JSONReader::Read(excluded_folders_message);
+      base::JSONReader::ReadDeprecated(excluded_folders_message);
   if (parsed_excluded_folders && parsed_excluded_folders->is_list()) {
     const std::vector<base::Value>& folder_paths =
         parsed_excluded_folders->GetList();
@@ -596,9 +621,39 @@ void CommonWebContentsDelegate::SetHtmlApiFullscreen(bool enter_fullscreen) {
     return;
   }
 
-  owner_window_->SetFullScreen(enter_fullscreen);
+  // Set fullscreen on window if allowed.
+  auto* web_preferences = WebContentsPreferences::From(GetWebContents());
+  bool html_fullscreenable =
+      web_preferences ? !web_preferences->IsEnabled(
+                            options::kDisableHtmlFullscreenWindowResize)
+                      : true;
+
+  if (html_fullscreenable) {
+    owner_window_->SetFullScreen(enter_fullscreen);
+  }
+
   html_fullscreen_ = enter_fullscreen;
   native_fullscreen_ = false;
+}
+
+void CommonWebContentsDelegate::ShowAutofillPopup(
+    content::RenderFrameHost* frame_host,
+    content::RenderFrameHost* embedder_frame_host,
+    bool offscreen,
+    const gfx::RectF& bounds,
+    const std::vector<base::string16>& values,
+    const std::vector<base::string16>& labels) {
+  if (!owner_window())
+    return;
+
+  autofill_popup_->CreateView(frame_host, embedder_frame_host, offscreen,
+                              owner_window()->content_view(), bounds);
+  autofill_popup_->SetItems(values, labels);
+}
+
+void CommonWebContentsDelegate::HideAutofillPopup() {
+  if (autofill_popup_)
+    autofill_popup_->Hide();
 }
 
 }  // namespace atom

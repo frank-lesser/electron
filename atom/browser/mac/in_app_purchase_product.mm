@@ -6,6 +6,8 @@
 
 #include "base/bind.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 #import <StoreKit/StoreKit.h>
@@ -21,8 +23,7 @@
   in_app_purchase::InAppPurchaseProductsCallback callback_;
 }
 
-- (id)initWithCallback:
-    (const in_app_purchase::InAppPurchaseProductsCallback&)callback;
+- (id)initWithCallback:(in_app_purchase::InAppPurchaseProductsCallback)callback;
 
 @end
 
@@ -36,9 +37,9 @@
  * @param callback - The callback that will be called to return the products.
  */
 - (id)initWithCallback:
-    (const in_app_purchase::InAppPurchaseProductsCallback&)callback {
+    (in_app_purchase::InAppPurchaseProductsCallback)callback {
   if ((self = [super init])) {
-    callback_ = callback;
+    callback_ = std::move(callback);
   }
 
   return self;
@@ -78,8 +79,8 @@
   }
 
   // Send the callback to the browser thread.
-  content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                   base::Bind(callback_, converted));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                           base::BindOnce(std::move(callback_), converted));
 
   [self release];
 }
@@ -165,8 +166,9 @@ Product::Product(const Product&) = default;
 Product::~Product() = default;
 
 void GetProducts(const std::vector<std::string>& productIDs,
-                 const InAppPurchaseProductsCallback& callback) {
-  auto* iapProduct = [[InAppPurchaseProduct alloc] initWithCallback:callback];
+                 InAppPurchaseProductsCallback callback) {
+  auto* iapProduct =
+      [[InAppPurchaseProduct alloc] initWithCallback:std::move(callback)];
 
   // Convert the products' id to NSSet.
   NSMutableSet* productsIDSet =

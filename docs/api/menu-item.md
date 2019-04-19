@@ -13,8 +13,8 @@ See [`Menu`](menu.md) for examples.
     `click(menuItem, browserWindow, event)` when the menu item is clicked.
     * `menuItem` MenuItem
     * `browserWindow` [BrowserWindow](browser-window.md)
-    * `event` Event
-  * `role` String (optional) - Define the action of the menu item, when specified the
+    * `event` [KeyboardEvent](structures/keyboard-event.md)
+  * `role` String (optional) - Can be `undo`, `redo`, `cut`, `copy`, `paste`, `pasteandmatchstyle`, `delete`, `selectall`, `reload`, `forcereload`, `toggledevtools`, `resetzoom`, `zoomin`, `zoomout`, `togglefullscreen`, `window`, `minimize`, `close`, `help`, `about`, `services`, `hide`, `hideothers`, `unhide`, `quit`, `startspeaking`, `stopspeaking`, `close`, `minimize`, `zoom`, `front`, `appMenu`, `fileMenu`, `editMenu`, `viewMenu` or `windowMenu` - Define the action of the menu item, when specified the
     `click` property will be ignored. See [roles](#roles).
   * `type` String (optional) - Can be `normal`, `separator`, `submenu`, `checkbox` or
     `radio`.
@@ -24,9 +24,12 @@ See [`Menu`](menu.md) for examples.
   * `icon` ([NativeImage](native-image.md) | String) (optional)
   * `enabled` Boolean (optional) - If false, the menu item will be greyed out and
     unclickable.
+  * `acceleratorWorksWhenHidden` Boolean (optional) - default is `true`, and when `false` will prevent the accelerator from triggering the item if the item is not visible`. _macOS_
   * `visible` Boolean (optional) - If false, the menu item will be entirely hidden.
   * `checked` Boolean (optional) - Should only be specified for `checkbox` or `radio` type
     menu items.
+  * `registerAccelerator` Boolean (optional) - If false, the accelerator won't be registered
+    with the system, but it will still be displayed. Defaults to true.
   * `submenu` (MenuItemConstructorOptions[] | [Menu](menu.md)) (optional) - Should be specified
     for `submenu` type menu items. If `submenu` is specified, the `type: 'submenu'` can be omitted.
     If the value is not a [`Menu`](menu.md) then it will be automatically converted to one using
@@ -45,6 +48,8 @@ See [`Menu`](menu.md) for examples.
   * `afterGroupContaining` String[] (optional) - Provides a means for a single context menu to declare
     the placement of their containing group after the containing group of the item
     with the specified label.
+
+**Note:** `acceleratorWorksWhenHidden` is specified as being macOS-only because accelerators always work when items are hidden on Windows and Linux. The option is exposed to users to give them the option to turn it off, as this is possible in native macOS development. This property is only usable on macOS High Sierra 10.13 or newer.
 
 ### Roles
 
@@ -80,11 +85,14 @@ The `role` property can have following values:
 * `resetZoom` - Reset the focused page's zoom level to the original size.
 * `zoomIn` - Zoom in the focused page by 10%.
 * `zoomOut` - Zoom out the focused page by 10%.
+* `fileMenu` - Whole default "File" menu (Close / Quit)
 * `editMenu` - Whole default "Edit" menu (Undo, Copy, etc.).
-* `windowMenu` - Whole default "Window" menu (Minimize, Close, etc.).
+* `viewMenu` - Whole default "View" menu (Reload, Toggle Developer Tools, etc.)
+* `windowMenu` - Whole default "Window" menu (Minimize, Zoom, etc.).
 
 The following additional roles are available on _macOS_:
 
+* `appMenu` - Whole default "App" menu (About, Services, etc.)
 * `about` - Map to the `orderFrontStandardAboutPanel` action.
 * `hide` - Map to the `hide` action.
 * `hideOthers` - Map to the `hideOtherApplications` action.

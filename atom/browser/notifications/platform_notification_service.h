@@ -28,23 +28,30 @@ class PlatformNotificationService
       content::BrowserContext* browser_context,
       const std::string& notification_id,
       const GURL& origin,
-      const content::PlatformNotificationData& notification_data,
-      const content::NotificationResources& notification_resources) override;
+      const blink::PlatformNotificationData& notification_data,
+      const blink::NotificationResources& notification_resources) override;
   void DisplayPersistentNotification(
       content::BrowserContext* browser_context,
       const std::string& notification_id,
       const GURL& service_worker_scope,
       const GURL& origin,
-      const content::PlatformNotificationData& notification_data,
-      const content::NotificationResources& notification_resources) override;
+      const blink::PlatformNotificationData& notification_data,
+      const blink::NotificationResources& notification_resources) override;
   void ClosePersistentNotification(content::BrowserContext* browser_context,
                                    const std::string& notification_id) override;
   void CloseNotification(content::BrowserContext* browser_context,
                          const std::string& notification_id) override;
   void GetDisplayedNotifications(
       content::BrowserContext* browser_context,
-      const DisplayedNotificationsCallback& callback) override;
+      DisplayedNotificationsCallback callback) override;
   int64_t ReadNextPersistentNotificationId(
+      content::BrowserContext* browser_context) override;
+  void RecordNotificationUkmEvent(
+      content::BrowserContext* browser_context,
+      const content::NotificationDatabaseData& data) override;
+  void ScheduleTrigger(content::BrowserContext* browser_context,
+                       base::Time timestamp) override;
+  base::Time ReadNextTriggerTimestamp(
       content::BrowserContext* browser_context) override;
 
  private:

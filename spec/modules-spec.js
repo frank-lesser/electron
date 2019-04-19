@@ -5,6 +5,7 @@ const fs = require('fs')
 const { remote } = require('electron')
 const { BrowserWindow } = remote
 const { closeWindow } = require('./window-helpers')
+const features = process.electronBinding('features')
 
 const nativeModulesEnabled = remote.getGlobal('nativeModulesEnabled')
 
@@ -12,14 +13,19 @@ describe('modules support', () => {
   const fixtures = path.join(__dirname, 'fixtures')
 
   describe('third-party module', () => {
-    (nativeModulesEnabled ? describe : describe.skip)('runas', () => {
+    (nativeModulesEnabled ? describe : describe.skip)('echo', () => {
       it('can be required in renderer', () => {
-        require('runas')
+        require('echo')
       })
 
-      it('can be required in node binary', (done) => {
-        const runas = path.join(fixtures, 'module', 'runas.js')
-        const child = require('child_process').fork(runas)
+      it('can be required in node binary', function (done) {
+        if (!features.isRunAsNodeEnabled()) {
+          this.skip()
+          done()
+        }
+
+        const echo = path.join(fixtures, 'module', 'echo.js')
+        const child = require('child_process').fork(echo)
         child.on('message', (msg) => {
           assert.strictEqual(msg, 'ok')
           done()
@@ -32,9 +38,9 @@ describe('modules support', () => {
           const testExecPath = path.join(path.dirname(execPath), 'test.exe')
           fs.copyFileSync(execPath, testExecPath)
           try {
-            const runasFixture = path.join(fixtures, 'module', 'runas-renamed.js')
-            assert.ok(fs.existsSync(runasFixture))
-            const child = require('child_process').spawnSync(testExecPath, [runasFixture])
+            const fixture = path.join(fixtures, 'module', 'echo-renamed.js')
+            assert.ok(fs.existsSync(fixture))
+            const child = require('child_process').spawnSync(testExecPath, [fixture])
             assert.strictEqual(child.status, 0)
           } finally {
             fs.unlinkSync(testExecPath)
@@ -162,7 +168,12 @@ describe('modules support', () => {
       let w
 
       beforeEach(() => {
-        w = new BrowserWindow({ show: false })
+        w = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            nodeIntegration: true
+          }
+        })
       })
 
       afterEach(async () => {

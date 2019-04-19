@@ -361,6 +361,14 @@ win.webContents.on('before-input-event', (event, input) => {
 })
 ```
 
+#### Event: 'enter-html-full-screen'
+
+Emitted when the window enters a full-screen state triggered by HTML API.
+
+#### Event: 'leave-html-full-screen'
+
+Emitted when the window leaves a full-screen state triggered by HTML API.
+
 #### Event: 'devtools-opened'
 
 Emitted when DevTools is opened.
@@ -663,6 +671,45 @@ Returns:
 Emitted when the associated window logs a console message. Will not be emitted
 for windows with *offscreen rendering* enabled.
 
+#### Event: 'preload-error'
+
+Returns:
+
+* `event` Event
+* `preloadPath` String
+* `error` Error
+
+Emitted when the preload script `preloadPath` throws an unhandled exception `error`.
+
+#### Event: 'ipc-message'
+
+Returns:
+
+* `event` Event
+* `channel` String
+* `...args` any[]
+
+Emitted when the renderer process sends an asynchronous message via `ipcRenderer.send()`.
+
+#### Event: 'ipc-message-sync'
+
+Returns:
+
+* `event` Event
+* `channel` String
+* `...args` any[]
+
+Emitted when the renderer process sends a synchronous message via `ipcRenderer.sendSync()`.
+
+#### Event: 'desktop-capturer-get-sources'
+
+Returns:
+
+* `event` Event
+
+Emitted when `desktopCapturer.getSources()` is called in the renderer process.
+Calling `event.preventDefault()` will make it return empty sources.
+
 #### Event: 'remote-require'
 
 Returns:
@@ -685,6 +732,48 @@ Emitted when `remote.getGlobal()` is called in the renderer process.
 Calling `event.preventDefault()` will prevent the global from being returned.
 Custom value can be returned by setting `event.returnValue`.
 
+#### Event: 'remote-get-builtin'
+
+Returns:
+
+* `event` Event
+* `moduleName` String
+
+Emitted when `remote.getBuiltin()` is called in the renderer process.
+Calling `event.preventDefault()` will prevent the module from being returned.
+Custom value can be returned by setting `event.returnValue`.
+
+#### Event: 'remote-get-current-window'
+
+Returns:
+
+* `event` Event
+
+Emitted when `remote.getCurrentWindow()` is called in the renderer process.
+Calling `event.preventDefault()` will prevent the object from being returned.
+Custom value can be returned by setting `event.returnValue`.
+
+#### Event: 'remote-get-current-web-contents'
+
+Returns:
+
+* `event` Event
+
+Emitted when `remote.getCurrentWebContents()` is called in the renderer process.
+Calling `event.preventDefault()` will prevent the object from being returned.
+Custom value can be returned by setting `event.returnValue`.
+
+#### Event: 'remote-get-guest-web-contents'
+
+Returns:
+
+* `event` Event
+* `guestWebContents` [WebContents](web-contents.md)
+
+Emitted when `<webview>.getWebContents()` is called in the renderer process.
+Calling `event.preventDefault()` will prevent the object from being returned.
+Custom value can be returned by setting `event.returnValue`.
+
 ### Instance Methods
 
 #### `contents.loadURL(url[, options])`
@@ -696,6 +785,11 @@ Custom value can be returned by setting `event.returnValue`.
   * `extraHeaders` String (optional) - Extra headers separated by "\n".
   * `postData` ([UploadRawData[]](structures/upload-raw-data.md) | [UploadFile[]](structures/upload-file.md) | [UploadBlob[]](structures/upload-blob.md)) (optional)
   * `baseURLForDataURL` String (optional) - Base url (with trailing path separator) for files to be loaded by the data url. This is needed only if the specified `url` is a data url and needs to load other files.
+
+Returns `Promise<void>` - the promise will resolve when the page has finished loading
+(see [`did-finish-load`](web-contents.md#event-did-finish-load)), and rejects
+if the page fails to load (see
+[`did-fail-load`](web-contents.md#event-did-fail-load)).
 
 Loads the `url` in the window. The `url` must contain the protocol prefix,
 e.g. the `http://` or `file://`. If the load should bypass http cache then
@@ -714,6 +808,10 @@ webContents.loadURL('https://github.com', options)
   * `query` Object (optional) - Passed to `url.format()`.
   * `search` String (optional) - Passed to `url.format()`.
   * `hash` String (optional) - Passed to `url.format()`.
+
+Returns `Promise<void>` - the promise will resolve when the page has finished loading
+(see [`did-finish-load`](web-contents.md#event-did-finish-load)), and rejects
+if the page fails to load (see [`did-fail-load`](web-contents.md#event-did-fail-load)).
 
 Loads the given file in the window, `filePath` should be a path to
 an HTML file relative to the root of your application.  For instance
@@ -853,6 +951,12 @@ Returns `String` - The user agent for this web page.
 
 Injects CSS into the current web page.
 
+```js
+contents.on('did-finish-load', function () {
+  contents.insertCSS('html, body { background-color: #f00; }')
+})
+```
+
 #### `contents.executeJavaScript(code[, userGesture, callback])`
 
 * `code` String
@@ -869,9 +973,28 @@ In the browser window some HTML APIs like `requestFullScreen` can only be
 invoked by a gesture from the user. Setting `userGesture` to `true` will remove
 this limitation.
 
-If the result of the executed code is a promise the callback result will be the
-resolved value of the promise. We recommend that you use the returned Promise
-to handle code that results in a Promise.
+```js
+contents.executeJavaScript('fetch("https://jsonplaceholder.typicode.com/users/1").then(resp => resp.json())', true)
+  .then((result) => {
+    console.log(result) // Will be the JSON object from the fetch call
+  })
+```
+
+**[Deprecated Soon](modernization/promisification.md)**
+
+#### `contents.executeJavaScript(code[, userGesture])`
+
+* `code` String
+* `userGesture` Boolean (optional) - Default is `false`.
+
+Returns `Promise<any>` - A promise that resolves with the result of the executed code
+or is rejected if the result of the code is a rejected promise.
+
+Evaluates `code` in page.
+
+In the browser window some HTML APIs like `requestFullScreen` can only be
+invoked by a gesture from the user. Setting `userGesture` to `true` will remove
+this limitation.
 
 ```js
 contents.executeJavaScript('fetch("https://jsonplaceholder.typicode.com/users/1").then(resp => resp.json())', true)
@@ -907,13 +1030,9 @@ Returns `Boolean` - Whether audio is currently playing.
 Changes the zoom factor to the specified factor. Zoom factor is
 zoom percent divided by 100, so 300% = 3.0.
 
-#### `contents.getZoomFactor(callback)`
+#### `contents.getZoomFactor()`
 
-* `callback` Function
-  * `zoomFactor` Number
-
-Sends a request to get current zoom factor, the `callback` will be called with
-`callback(zoomFactor)`.
+Returns `Number` - the current zoom factor.
 
 #### `contents.setZoomLevel(level)`
 
@@ -924,13 +1043,9 @@ increment above or below represents zooming 20% larger or smaller to default
 limits of 300% and 50% of original size, respectively. The formula for this is
 `scale := 1.2 ^ level`.
 
-#### `contents.getZoomLevel(callback)`
+#### `contents.getZoomLevel()`
 
-* `callback` Function
-  * `zoomLevel` Number
-
-Sends a request to get current zoom level, the `callback` will be called with
-`callback(zoomLevel)`.
+Returns `Number` - the current zoom level.
 
 #### `contents.setVisualZoomLevelLimits(minimumLevel, maximumLevel)`
 
@@ -938,6 +1053,12 @@ Sends a request to get current zoom level, the `callback` will be called with
 * `maximumLevel` Number
 
 Sets the maximum and minimum pinch-to-zoom level.
+
+> **NOTE**: Visual zoom is disabled by default in Electron. To re-enable it, call:
+>
+> ```js
+> contents.setVisualZoomLevelLimits(1, 3)
+> ```
 
 #### `contents.setLayoutZoomLevelLimits(minimumLevel, maximumLevel)`
 
@@ -1050,31 +1171,23 @@ console.log(requestId)
 
 #### `contents.capturePage([rect, ]callback)`
 
-* `rect` [Rectangle](structures/rectangle.md) (optional) - The area of the page to be captured.
+* `rect` [Rectangle](structures/rectangle.md) (optional) - The bounds to capture
 * `callback` Function
   * `image` [NativeImage](native-image.md)
 
 Captures a snapshot of the page within `rect`. Upon completion `callback` will
-be called with `callback(image)`. The `image` is an instance of
-[NativeImage](native-image.md) that stores data of the snapshot. Omitting
-`rect` will capture the whole visible page.
+be called with `callback(image)`. The `image` is an instance of [NativeImage](native-image.md)
+that stores data of the snapshot. Omitting `rect` will capture the whole visible page.
 
-#### `contents.hasServiceWorker(callback)`
+**[Deprecated Soon](modernization/promisification.md)**
 
-* `callback` Function
-  * `hasWorker` Boolean
+#### `contents.capturePage([rect])`
 
-Checks if any ServiceWorker is registered and returns a boolean as
-response to `callback`.
+* `rect` [Rectangle](structures/rectangle.md) (optional) - The area of the page to be captured.
 
-#### `contents.unregisterServiceWorker(callback)`
+Returns `Promise<NativeImage>` - Resolves with a [NativeImage](native-image.md)
 
-* `callback` Function
-  * `success` Boolean
-
-Unregisters any ServiceWorker if present and returns a boolean as
-response to `callback` when the JS promise is fulfilled or false
-when the JS promise is rejected.
+Captures a snapshot of the page within `rect`. Omitting `rect` will capture the whole visible page.
 
 #### `contents.getPrinters()`
 
@@ -1121,6 +1234,25 @@ settings.
 
 The `callback` will be called with `callback(error, data)` on completion. The
 `data` is a `Buffer` that contains the generated PDF data.
+
+**[Deprecated Soon](modernization/promisification.md)**
+
+#### `contents.printToPDF(options)`
+
+* `options` Object
+  * `marginsType` Integer (optional) - Specifies the type of margins to use. Uses 0 for
+    default margin, 1 for no margin, and 2 for minimum margin.
+  * `pageSize` String | Size (optional) - Specify page size of the generated PDF. Can be `A3`,
+    `A4`, `A5`, `Legal`, `Letter`, `Tabloid` or an Object containing `height`
+    and `width` in microns.
+  * `printBackground` Boolean (optional) - Whether to print CSS backgrounds.
+  * `printSelectionOnly` Boolean (optional) - Whether to print selection only.
+  * `landscape` Boolean (optional) - `true` for landscape, `false` for portrait.
+
+Returns `Promise<Buffer>` - Resolves with the generated PDF data.
+
+Prints window's web page as PDF with Chromium's preview printing custom
+settings.
 
 The `landscape` will be ignored if `@page` CSS at-rule is used in the web page.
 
@@ -1245,8 +1377,10 @@ app.once('ready', () => {
 
 * `options` Object (optional)
   * `mode` String - Opens the devtools with specified dock state, can be
-  `right`, `bottom`, `undocked`, `detach`. Defaults to last used dock state.
-  In `undocked` mode it's possible to dock back. In `detach` mode it's not.
+    `right`, `bottom`, `undocked`, `detach`. Defaults to last used dock state.
+    In `undocked` mode it's possible to dock back. In `detach` mode it's not.
+  * `activate` Boolean (optional) - Whether to bring the opened devtools window
+    to the foreground. The default is `true`.
 
 Opens the devtools.
 
@@ -1275,6 +1409,10 @@ Toggles the developer tools.
 * `y` Integer
 
 Starts inspecting element at position (`x`, `y`).
+
+#### `contents.inspectSharedWorker()`
+
+Opens the developer tools for the shared worker context.
 
 #### `contents.inspectServiceWorker()`
 
@@ -1319,6 +1457,36 @@ app.on('ready', () => {
   </script>
 </body>
 </html>
+```
+
+#### `contents.sendToFrame(frameId, channel[, arg1][, arg2][, ...])`
+
+* `frameId` Integer
+* `channel` String
+* `...args` any[]
+
+Send an asynchronous message to a specific frame in a renderer process via
+`channel`. Arguments will be serialized
+as JSON internally and as such no functions or prototype chains will be included.
+
+The renderer process can handle the message by listening to `channel` with the
+[`ipcRenderer`](ipc-renderer.md) module.
+
+If you want to get the `frameId` of a given renderer context you should use
+the `webFrame.routingId` value.  E.g.
+
+```js
+// In a renderer process
+console.log('My frameId is:', require('electron').webFrame.routingId)
+```
+
+You can also read `frameId` from all incoming IPC messages in the main process.
+
+```js
+// In the main process
+ipcMain.on('ping', (event) => {
+  console.info('Message came from frameId:', event.frameId)
+})
 ```
 
 #### `contents.enableDeviceEmulation(parameters)`
@@ -1420,17 +1588,15 @@ Sets the `item` as dragging item for current drag-drop operation, `file` is the
 absolute path of the file to be dragged, and `icon` is the image showing under
 the cursor when dragging.
 
-#### `contents.savePage(fullPath, saveType, callback)`
+#### `contents.savePage(fullPath, saveType)`
 
 * `fullPath` String - The full file path.
 * `saveType` String - Specify the save type.
   * `HTMLOnly` - Save only the HTML of the page.
   * `HTMLComplete` - Save complete-html page.
   * `MHTML` - Save complete-html page as MHTML.
-* `callback` Function - `(error) => {}`.
-  * `error` Error
 
-Returns `Boolean` - true if the process of saving page has been initiated successfully.
+Returns `Promise<void>` - resolves if the page is saved.
 
 ```javascript
 const { BrowserWindow } = require('electron')
@@ -1438,9 +1604,11 @@ let win = new BrowserWindow()
 
 win.loadURL('https://github.com')
 
-win.webContents.on('did-finish-load', () => {
-  win.webContents.savePage('/tmp/test.html', 'HTMLComplete', (error) => {
-    if (!error) console.log('Save page successfully')
+win.webContents.on('did-finish-load', async () => {
+  win.webContents.savePage('/tmp/test.html', 'HTMLComplete').then(() => {
+    console.log('Page was saved successfully.')
+  }).catch(err => {
+    console.log(err)
   })
 })
 ```
@@ -1533,6 +1701,10 @@ Takes a V8 heap snapshot and saves it to `filePath`.
 
 Controls whether or not this WebContents will throttle animations and timers
 when the page becomes backgrounded. This also affects the Page Visibility API.
+
+#### `contents.getType()`
+
+Returns `String` - the type of the webContent. Can be `backgroundPage`, `window`, `browserView`, `remote`, `webview` or `offscreen`.
 
 ### Instance Properties
 

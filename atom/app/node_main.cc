@@ -10,20 +10,20 @@
 #include "atom/app/uv_task_runner.h"
 #include "atom/browser/javascript_environment.h"
 #include "atom/browser/node_debugger.h"
-#include "atom/common/api/atom_bindings.h"
+#include "atom/common/api/electron_bindings.h"
+#include "atom/common/atom_version.h"
 #include "atom/common/crash_reporter/crash_reporter.h"
 #include "atom/common/native_mate_converters/string16_converter.h"
 #include "atom/common/node_bindings.h"
+#include "atom/common/node_includes.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "gin/array_buffer.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/v8_initializer.h"
 #include "native_mate/dictionary.h"
-
-#include "atom/common/node_includes.h"
 
 namespace atom {
 
@@ -70,14 +70,19 @@ int NodeMain(int argc, char* argv[]) {
 
     mate::Dictionary process(gin_env.isolate(), env->process_object());
 #if defined(OS_WIN)
-    process.SetMethod("log", &AtomBindings::Log);
+    process.SetMethod("log", &ElectronBindings::Log);
 #endif
-    process.SetMethod("crash", &AtomBindings::Crash);
+    process.SetMethod("crash", &ElectronBindings::Crash);
 
     // Setup process.crashReporter.start in child node processes
     auto reporter = mate::Dictionary::CreateEmpty(gin_env.isolate());
     reporter.SetMethod("start", &crash_reporter::CrashReporter::StartInstance);
     process.Set("crashReporter", reporter);
+
+    mate::Dictionary versions;
+    if (process.Get("versions", &versions)) {
+      versions.SetReadOnly(ATOM_PROJECT_NAME, ATOM_VERSION_STRING);
+    }
 
     node::LoadEnvironment(env);
 

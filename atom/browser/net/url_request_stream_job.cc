@@ -16,7 +16,10 @@
 #include "atom/common/node_includes.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "native_mate/dictionary.h"
 #include "net/base/net_errors.h"
 #include "net/filter/gzip_source_stream.h"
@@ -32,8 +35,8 @@ void BeforeStartInUI(base::WeakPtr<URLRequestStreamJob> job,
   bool ended = false;
   if (!args->GetNext(&value) || !value->IsObject()) {
     // Invalid opts.
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&URLRequestStreamJob::OnError, job, net::ERR_FAILED));
     return;
   }
@@ -65,8 +68,8 @@ void BeforeStartInUI(base::WeakPtr<URLRequestStreamJob> job,
     // "data" was explicitly passed as null or undefined, assume the user wants
     // to send an empty body.
     ended = true;
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&URLRequestStreamJob::StartAsync, job, nullptr,
                        base::RetainedRef(response_headers), ended, error));
     return;
@@ -76,20 +79,20 @@ void BeforeStartInUI(base::WeakPtr<URLRequestStreamJob> job,
   if (!data.Get("on", &value) || !value->IsFunction() ||
       !data.Get("removeListener", &value) || !value->IsFunction()) {
     // If data is passed but it is not a stream, signal an error.
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&URLRequestStreamJob::OnError, job, net::ERR_FAILED));
     return;
   }
 
-  auto subscriber = std::make_unique<mate::StreamSubscriber>(
-      args->isolate(), data.GetHandle(), job);
+  auto subscriber = base::MakeRefCounted<mate::StreamSubscriber>(
+      args->isolate(), data.GetHandle(), job,
+      base::ThreadTaskRunnerHandle::Get());
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&URLRequestStreamJob::StartAsync, job,
-                     std::move(subscriber), base::RetainedRef(response_headers),
-                     ended, error));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
+      base::BindOnce(&URLRequestStreamJob::StartAsync, job, subscriber,
+                     base::RetainedRef(response_headers), ended, error));
 }
 
 }  // namespace
@@ -104,24 +107,21 @@ URLRequestStreamJob::URLRequestStreamJob(net::URLRequest* request,
       weak_factory_(this) {}
 
 URLRequestStreamJob::~URLRequestStreamJob() {
-  if (subscriber_) {
-    content::BrowserThread::DeleteSoon(content::BrowserThread::UI, FROM_HERE,
-                                       std::move(subscriber_));
-  }
+  DCHECK(!subscriber_ || subscriber_->HasOneRef());
 }
 
 void URLRequestStreamJob::Start() {
   auto request_details = std::make_unique<base::DictionaryValue>();
   FillRequestDetails(request_details.get(), request());
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&JsAsker::AskForOptions, base::Unretained(isolate()),
                      handler(), std::move(request_details),
                      base::Bind(&BeforeStartInUI, weak_factory_.GetWeakPtr())));
 }
 
 void URLRequestStreamJob::StartAsync(
-    std::unique_ptr<mate::StreamSubscriber> subscriber,
+    scoped_refptr<mate::StreamSubscriber> subscriber,
     scoped_refptr<net::HttpResponseHeaders> response_headers,
     bool ended,
     int error) {
@@ -133,12 +133,13 @@ void URLRequestStreamJob::StartAsync(
 
   ended_ = ended;
   response_headers_ = response_headers;
-  subscriber_ = std::move(subscriber);
+  subscriber_ = subscriber;
   request_start_time_ = base::TimeTicks::Now();
   NotifyHeadersComplete();
 }
 
 void URLRequestStreamJob::OnData(std::vector<char>&& buffer) {  // NOLINT
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   if (write_buffer_.empty()) {
     // Quick branch without copying.
     write_buffer_ = std::move(buffer);
@@ -173,7 +174,7 @@ void URLRequestStreamJob::OnError(int error) {
 int URLRequestStreamJob::ReadRawData(net::IOBuffer* dest, int dest_size) {
   response_start_time_ = base::TimeTicks::Now();
 
-  if (ended_)
+  if (ended_ && write_buffer_.empty())
     return 0;
 
   // When write_buffer_ is empty, there is no data valable yet, we have to save
@@ -191,12 +192,14 @@ int URLRequestStreamJob::ReadRawData(net::IOBuffer* dest, int dest_size) {
 }
 
 void URLRequestStreamJob::DoneReading() {
-  content::BrowserThread::DeleteSoon(content::BrowserThread::UI, FROM_HERE,
-                                     std::move(subscriber_));
   write_buffer_.clear();
 }
 
 void URLRequestStreamJob::DoneReadingRedirectResponse() {
+  if (subscriber_) {
+    DCHECK(subscriber_->HasAtLeastOneRef());
+    subscriber_ = nullptr;
+  }
   DoneReading();
 }
 

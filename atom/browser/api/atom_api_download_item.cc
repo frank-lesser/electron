@@ -11,12 +11,11 @@
 #include "atom/common/native_mate_converters/file_dialog_converter.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
 #include "atom/common/native_mate_converters/gurl_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "native_mate/dictionary.h"
 #include "net/base/filename_util.h"
-
-#include "atom/common/node_includes.h"
 
 namespace mate {
 
@@ -103,7 +102,7 @@ bool DownloadItem::IsPaused() const {
 }
 
 void DownloadItem::Resume() {
-  download_item_->Resume();
+  download_item_->Resume(true /* user_gesture */);
 }
 
 bool DownloadItem::CanResume() const {
@@ -244,10 +243,11 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
   mate::Dictionary(isolate, exports)
-      .Set("DownloadItem",
-           atom::api::DownloadItem::GetConstructor(isolate)->GetFunction());
+      .Set("DownloadItem", atom::api::DownloadItem::GetConstructor(isolate)
+                               ->GetFunction(context)
+                               .ToLocalChecked());
 }
 
 }  // namespace
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(atom_browser_download_item, Initialize);
+NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_download_item, Initialize)

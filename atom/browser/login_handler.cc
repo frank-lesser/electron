@@ -9,7 +9,9 @@
 
 #include "atom/browser/browser.h"
 #include "atom/common/native_mate_converters/net_converter.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/auth.h"
@@ -18,12 +20,11 @@ using content::BrowserThread;
 
 namespace atom {
 
-LoginHandler::LoginHandler(
-    net::URLRequest* request,
-    const net::AuthChallengeInfo& auth_info,
-    net::NetworkDelegate::AuthCallback callback,
-    net::AuthCredentials* credentials,
-    const content::ResourceRequestInfo* resource_request_info)
+LoginHandler::LoginHandler(net::URLRequest* request,
+                           const net::AuthChallengeInfo& auth_info,
+                           net::NetworkDelegate::AuthCallback callback,
+                           net::AuthCredentials* credentials,
+                           content::ResourceRequestInfo* resource_request_info)
     : credentials_(credentials),
       auth_info_(&auth_info),
       auth_callback_(std::move(callback)),
@@ -37,8 +38,8 @@ LoginHandler::LoginHandler(
   web_contents_getter_ =
       resource_request_info->GetWebContentsGetterForRequest();
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&Browser::RequestLogin, base::Unretained(Browser::Get()),
                      base::RetainedRef(this), std::move(request_details)));
 }
@@ -49,8 +50,8 @@ void LoginHandler::Login(const base::string16& username,
                          const base::string16& password) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&LoginHandler::DoLogin, weak_factory_.GetWeakPtr(),
                      username, password));
 }
@@ -58,8 +59,8 @@ void LoginHandler::Login(const base::string16& username,
 void LoginHandler::CancelAuth() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&LoginHandler::DoCancelAuth, weak_factory_.GetWeakPtr()));
 }
 

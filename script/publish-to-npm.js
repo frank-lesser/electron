@@ -2,22 +2,18 @@ const temp = require('temp')
 const fs = require('fs')
 const path = require('path')
 const childProcess = require('child_process')
-const GitHubApi = require('github')
-const { GitProcess } = require('dugite')
+const { getCurrentBranch } = require('./lib/utils.js')
 const request = require('request')
 const semver = require('semver')
 const rootPackageJson = require('../package.json')
+const octokit = require('@octokit/rest')({
+  headers: { 'User-Agent': 'electron-npm-publisher' }
+})
 
 if (!process.env.ELECTRON_NPM_OTP) {
   console.error('Please set ELECTRON_NPM_OTP')
   process.exit(1)
 }
-
-const github = new GitHubApi({
-  // debug: true,
-  headers: { 'User-Agent': 'electron-npm-publisher' },
-  followRedirects: false
-})
 
 let tempDir
 temp.track() // track and cleanup files at exit
@@ -72,7 +68,7 @@ new Promise((resolve, reject) => {
       JSON.stringify(packageJson, null, 2)
     )
 
-    return github.repos.getReleases({
+    return octokit.repos.listReleases({
       owner: 'electron',
       repo: rootPackageJson.version.indexOf('nightly') > 0 ? 'nightlies' : 'electron'
     })
@@ -114,10 +110,20 @@ new Promise((resolve, reject) => {
 
     if (release.tag_name.indexOf('nightly') > 0) {
       if (currentBranch === 'master') {
-        npmTag = 'nightly'
+        // Nightlies get published to their own module, so master nightlies should be tagged as latest
+        npmTag = 'latest'
       } else {
         npmTag = `nightly-${currentBranch}`
       }
+
+      const currentJson = JSON.parse(fs.readFileSync(path.join(tempDir, 'package.json'), 'utf8'))
+      currentJson.name = 'electron-nightly'
+      rootPackageJson.name = 'electron-nightly'
+
+      fs.writeFileSync(
+        path.join(tempDir, 'package.json'),
+        JSON.stringify(currentJson, null, 2)
+      )
     } else {
       if (currentBranch === 'master') {
         // This should never happen, master releases should be nightly releases
@@ -149,34 +155,20 @@ new Promise((resolve, reject) => {
     const currentTags = JSON.parse(childProcess.execSync('npm show electron dist-tags --json').toString())
     const localVersion = rootPackageJson.version
     const parsedLocalVersion = semver.parse(localVersion)
-    if (parsedLocalVersion.prerelease.length === 0 &&
-          semver.gt(localVersion, currentTags.latest)) {
-      childProcess.execSync(`npm dist-tag add electron@${localVersion} latest --otp=${process.env.ELECTRON_NPM_OTP}`)
-    }
-    if (parsedLocalVersion.prerelease[0] === 'beta' &&
-          semver.gt(localVersion, currentTags.beta)) {
-      childProcess.execSync(`npm dist-tag add electron@${localVersion} beta --otp=${process.env.ELECTRON_NPM_OTP}`)
+    if (rootPackageJson.name === 'electron') {
+      // We should only customly add dist tags for non-nightly releases where the package name is still
+      // "electron"
+      if (parsedLocalVersion.prerelease.length === 0 &&
+            semver.gt(localVersion, currentTags.latest)) {
+        childProcess.execSync(`npm dist-tag add electron@${localVersion} latest --otp=${process.env.ELECTRON_NPM_OTP}`)
+      }
+      if (parsedLocalVersion.prerelease[0] === 'beta' &&
+            semver.gt(localVersion, currentTags.beta)) {
+        childProcess.execSync(`npm dist-tag add electron@${localVersion} beta --otp=${process.env.ELECTRON_NPM_OTP}`)
+      }
     }
   })
   .catch((err) => {
     console.error(`Error: ${err}`)
     process.exit(1)
   })
-
-async function getCurrentBranch () {
-  const gitDir = path.resolve(__dirname, '..')
-  console.log(`Determining current git branch`)
-  const gitArgs = ['rev-parse', '--abbrev-ref', 'HEAD']
-  const branchDetails = await GitProcess.exec(gitArgs, gitDir)
-  if (branchDetails.exitCode === 0) {
-    const currentBranch = branchDetails.stdout.trim()
-    console.log(`Successfully determined current git branch is ` +
-      `${currentBranch}`)
-    return currentBranch
-  } else {
-    const error = GitProcess.parseError(branchDetails.stderr)
-    console.log(`Could not get details for the current branch,
-      error was ${branchDetails.stderr}`, error)
-    process.exit(1)
-  }
-}

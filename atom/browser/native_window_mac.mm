@@ -29,8 +29,8 @@
 #include "ui/gfx/skia_util.h"
 #include "ui/gl/gpu_switching_manager.h"
 #include "ui/views/background.h"
-#include "ui/views/cocoa/bridged_native_widget.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views_bridge_mac/bridged_native_widget_impl.h"
 
 // This view always takes the size of its superview. It is intended to be used
 // as a NSWindow's contentView.  It is needed because NSWindow's implementation
@@ -76,9 +76,6 @@
   NSButton* miniaturize_button =
       [NSWindow standardWindowButton:NSWindowMiniaturizeButton
                         forStyleMask:NSWindowStyleMaskTitled];
-  NSButton* zoom_button =
-      [NSWindow standardWindowButton:NSWindowZoomButton
-                        forStyleMask:NSWindowStyleMaskTitled];
 
   CGFloat x = 0;
   const CGFloat space_between = 20;
@@ -91,11 +88,7 @@
   x += space_between;
   [self addSubview:miniaturize_button];
 
-  [zoom_button setFrameOrigin:NSMakePoint(x, 0)];
-  x += space_between;
-  [self addSubview:zoom_button];
-
-  const auto last_button_frame = zoom_button.frame;
+  const auto last_button_frame = miniaturize_button.frame;
   [self setFrameSize:NSMakeSize(last_button_frame.origin.x +
                                     last_button_frame.size.width,
                                 last_button_frame.size.height)];
@@ -240,7 +233,10 @@ namespace atom {
 namespace {
 
 bool IsFramelessWindow(NSView* view) {
-  NativeWindow* window = [static_cast<AtomNSWindow*>([view window]) shell];
+  NSWindow* nswindow = [view window];
+  if (![nswindow respondsToSelector:@selector(shell)])
+    return false;
+  NativeWindow* window = [static_cast<AtomNSWindow*>(nswindow) shell];
   return window && !window->has_frame();
 }
 
@@ -322,11 +318,9 @@ NativeWindowMac::NativeWindowMac(const mate::Dictionary& options,
   }
 
   NSUInteger styleMask = NSWindowStyleMaskTitled;
-  if (@available(macOS 10.10, *)) {
-    if (title_bar_style_ == CUSTOM_BUTTONS_ON_HOVER &&
-        (!useStandardWindow || transparent() || !has_frame())) {
-      styleMask = NSWindowStyleMaskFullSizeContentView;
-    }
+  if (title_bar_style_ == CUSTOM_BUTTONS_ON_HOVER &&
+      (!useStandardWindow || transparent() || !has_frame())) {
+    styleMask = NSWindowStyleMaskFullSizeContentView;
   }
   if (minimizable) {
     styleMask |= NSMiniaturizableWindowMask;
@@ -354,7 +348,8 @@ NativeWindowMac::NativeWindowMac(const mate::Dictionary& options,
   params.type = views::Widget::InitParams::TYPE_WINDOW;
   params.native_widget = new AtomNativeWidgetMac(this, styleMask, widget());
   widget()->Init(params);
-  window_ = static_cast<AtomNSWindow*>(widget()->GetNativeWindow());
+  window_ = static_cast<AtomNSWindow*>(
+      widget()->GetNativeWindow().GetNativeNSWindow());
 
   [window_ setEnableLargerThanScreen:enable_larger_than_screen()];
 
@@ -384,11 +379,9 @@ NativeWindowMac::NativeWindowMac(const mate::Dictionary& options,
     [window_ setDisableKeyOrMainWindow:YES];
 
   if (transparent() || !has_frame()) {
-    if (@available(macOS 10.10, *)) {
-      // Don't show title bar.
-      [window_ setTitlebarAppearsTransparent:YES];
-      [window_ setTitleVisibility:NSWindowTitleHidden];
-    }
+    // Don't show title bar.
+    [window_ setTitlebarAppearsTransparent:YES];
+    [window_ setTitleVisibility:NSWindowTitleHidden];
     // Remove non-transparent corners, see http://git.io/vfonD.
     [window_ setOpaque:NO];
   }
@@ -407,22 +400,15 @@ NativeWindowMac::NativeWindowMac(const mate::Dictionary& options,
 
   // Hide the title bar background
   if (title_bar_style_ != NORMAL) {
-    if (@available(macOS 10.10, *)) {
-      [window_ setTitlebarAppearsTransparent:YES];
-    }
+    [window_ setTitlebarAppearsTransparent:YES];
   }
 
   // Hide the title bar.
   if (title_bar_style_ == HIDDEN_INSET) {
-    if (@available(macOS 10.10, *)) {
-      base::scoped_nsobject<NSToolbar> toolbar(
-          [[NSToolbar alloc] initWithIdentifier:@"titlebarStylingToolbar"]);
-      [toolbar setShowsBaselineSeparator:NO];
-      [window_ setToolbar:toolbar];
-    } else {
-      [window_ enableWindowButtonsOffset];
-      [window_ setWindowButtonsOffset:NSMakePoint(12, 10)];
-    }
+    base::scoped_nsobject<NSToolbar> toolbar(
+        [[NSToolbar alloc] initWithIdentifier:@"titlebarStylingToolbar"]);
+    [toolbar setShowsBaselineSeparator:NO];
+    [window_ setToolbar:toolbar];
   }
 
   // Resize to content bounds.
@@ -480,7 +466,8 @@ NativeWindowMac::NativeWindowMac(const mate::Dictionary& options,
 }
 
 NativeWindowMac::~NativeWindowMac() {
-  [NSEvent removeMonitor:wheel_event_monitor_];
+  if (wheel_event_monitor_)
+    [NSEvent removeMonitor:wheel_event_monitor_];
 }
 
 void NativeWindowMac::SetContentView(views::View* view) {
@@ -503,7 +490,7 @@ void NativeWindowMac::SetContentView(views::View* view) {
 void NativeWindowMac::Close() {
   // When this is a sheet showing, performClose won't work.
   if (is_modal() && parent() && IsVisible()) {
-    [parent()->GetNativeWindow() endSheet:window_];
+    [parent()->GetNativeWindow().GetNativeNSWindow() endSheet:window_];
     CloseImmediately();
     return;
   }
@@ -517,6 +504,13 @@ void NativeWindowMac::Close() {
 }
 
 void NativeWindowMac::CloseImmediately() {
+  // Remove event monitor before destroying window, otherwise the monitor may
+  // call its callback after window has been destroyed.
+  if (wheel_event_monitor_) {
+    [NSEvent removeMonitor:wheel_event_monitor_];
+    wheel_event_monitor_ = nil;
+  }
+
   // Retain the child window before closing it. If the last reference to the
   // NSWindow goes away inside -[NSWindow close], then bad stuff can happen.
   // See e.g. http://crbug.com/616701.
@@ -530,7 +524,7 @@ void NativeWindowMac::Focus(bool focus) {
     return;
 
   if (focus) {
-    [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+    [[NSApplication sharedApplication] activateIgnoringOtherApps:NO];
     [window_ makeKeyAndOrderFront:nil];
   } else {
     [window_ orderBack:nil];
@@ -544,9 +538,10 @@ bool NativeWindowMac::IsFocused() {
 void NativeWindowMac::Show() {
   if (is_modal() && parent()) {
     if ([window_ sheetParent] == nil)
-      [parent()->GetNativeWindow() beginSheet:window_
-                            completionHandler:^(NSModalResponse){
-                            }];
+      [parent()->GetNativeWindow().GetNativeNSWindow()
+                 beginSheet:window_
+          completionHandler:^(NSModalResponse){
+          }];
     return;
   }
 
@@ -572,7 +567,7 @@ void NativeWindowMac::ShowInactive() {
 void NativeWindowMac::Hide() {
   if (is_modal() && parent()) {
     [window_ orderOut:nil];
-    [parent()->GetNativeWindow() endSheet:window_];
+    [parent()->GetNativeWindow().GetNativeNSWindow() endSheet:window_];
     return;
   }
 
@@ -584,7 +579,12 @@ void NativeWindowMac::Hide() {
 }
 
 bool NativeWindowMac::IsVisible() {
-  return [window_ isVisible];
+  bool occluded = [window_ occlusionState] == NSWindowOcclusionStateVisible;
+
+  // For a window to be visible, it must be visible to the user in the
+  // foreground of the app, which means that it should not be minimized or
+  // occluded
+  return [window_ isVisible] && !occluded && !IsMinimized();
 }
 
 bool NativeWindowMac::IsEnabled() {
@@ -871,17 +871,11 @@ void NativeWindowMac::Invalidate() {
 }
 
 void NativeWindowMac::SetTitle(const std::string& title) {
-  // For macOS <= 10.9, the setTitleVisibility API is not available, we have
-  // to avoid calling setTitle for frameless window.
-  if (!base::mac::IsAtLeastOS10_10() && (transparent() || !has_frame()))
-    return;
-
   [window_ setTitle:base::SysUTF8ToNSString(title)];
 }
 
 std::string NativeWindowMac::GetTitle() {
   return base::SysNSStringToUTF8([window_ title]);
-  ;
 }
 
 void NativeWindowMac::FlashFrame(bool flash) {
@@ -895,8 +889,18 @@ void NativeWindowMac::FlashFrame(bool flash) {
 
 void NativeWindowMac::SetSkipTaskbar(bool skip) {}
 
+bool NativeWindowMac::IsExcludedFromShownWindowsMenu() {
+  NSWindow* window = GetNativeWindow().GetNativeNSWindow();
+  return [window isExcludedFromWindowsMenu];
+}
+
+void NativeWindowMac::SetExcludedFromShownWindowsMenu(bool excluded) {
+  NSWindow* window = GetNativeWindow().GetNativeNSWindow();
+  [window setExcludedFromWindowsMenu:excluded];
+}
+
 void NativeWindowMac::SetSimpleFullScreen(bool simple_fullscreen) {
-  NSWindow* window = GetNativeWindow();
+  NSWindow* window = GetNativeWindow().GetNativeNSWindow();
 
   if (simple_fullscreen && !is_simple_fullscreen_) {
     is_simple_fullscreen_ = true;
@@ -1068,27 +1072,38 @@ void NativeWindowMac::SetContentProtection(bool enable) {
       setSharingType:enable ? NSWindowSharingNone : NSWindowSharingReadOnly];
 }
 
-void NativeWindowMac::SetBrowserView(NativeBrowserView* view) {
+void NativeWindowMac::AddBrowserView(NativeBrowserView* view) {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
-
-  if (browser_view()) {
-    [browser_view()->GetInspectableWebContentsView()->GetNativeView()
-            removeFromSuperview];
-    set_browser_view(nullptr);
-  }
 
   if (!view) {
     [CATransaction commit];
     return;
   }
 
-  set_browser_view(view);
-  auto* native_view = view->GetInspectableWebContentsView()->GetNativeView();
+  add_browser_view(view);
+  auto* native_view =
+      view->GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   [[window_ contentView] addSubview:native_view
                          positioned:NSWindowAbove
                          relativeTo:nil];
   native_view.hidden = NO;
+
+  [CATransaction commit];
+}
+
+void NativeWindowMac::RemoveBrowserView(NativeBrowserView* view) {
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+
+  if (!view) {
+    [CATransaction commit];
+    return;
+  }
+
+  [view->GetInspectableWebContentsView()->GetNativeView().GetNativeNSView()
+          removeFromSuperview];
+  remove_browser_view(view);
 
   [CATransaction commit];
 }
@@ -1109,26 +1124,31 @@ gfx::AcceleratedWidget NativeWindowMac::GetAcceleratedWidget() const {
   return gfx::kNullAcceleratedWidget;
 }
 
-std::tuple<void*, int> NativeWindowMac::GetNativeWindowHandlePointer() const {
-  NSView* view = [window_ contentView];
-  return std::make_tuple(static_cast<void*>(view), sizeof(view));
+NativeWindowHandle NativeWindowMac::GetNativeWindowHandle() const {
+  return [window_ contentView];
 }
 
 void NativeWindowMac::SetProgressBar(double progress,
                                      const NativeWindow::ProgressState state) {
   NSDockTile* dock_tile = [NSApp dockTile];
 
+  // Sometimes macOS would install a default contentView for dock, we must
+  // verify whether NSProgressIndicator has been installed.
+  bool first_time = !dock_tile.contentView ||
+                    [[dock_tile.contentView subviews] count] == 0 ||
+                    ![[[dock_tile.contentView subviews] lastObject]
+                        isKindOfClass:[NSProgressIndicator class]];
+
   // For the first time API invoked, we need to create a ContentView in
   // DockTile.
-  if (dock_tile.contentView == nullptr) {
-    NSImageView* image_view = [[NSImageView alloc] init];
+  if (first_time) {
+    NSImageView* image_view = [[[NSImageView alloc] init] autorelease];
     [image_view setImage:[NSApp applicationIconImage]];
     [dock_tile setContentView:image_view];
-  }
 
-  if ([[dock_tile.contentView subviews] count] == 0) {
-    NSProgressIndicator* progress_indicator = [[AtomProgressBar alloc]
-        initWithFrame:NSMakeRect(0.0f, 0.0f, dock_tile.size.width, 15.0)];
+    NSRect frame = NSMakeRect(0.0f, 0.0f, dock_tile.size.width, 15.0);
+    NSProgressIndicator* progress_indicator =
+        [[[AtomProgressBar alloc] initWithFrame:frame] autorelease];
     [progress_indicator setStyle:NSProgressIndicatorBarStyle];
     [progress_indicator setIndeterminate:NO];
     [progress_indicator setBezeled:YES];
@@ -1139,7 +1159,7 @@ void NativeWindowMac::SetProgressBar(double progress,
   }
 
   NSProgressIndicator* progress_indicator = static_cast<NSProgressIndicator*>(
-      [[[dock_tile contentView] subviews] objectAtIndex:0]);
+      [[[dock_tile contentView] subviews] lastObject]);
   if (progress < 0) {
     [progress_indicator setHidden:YES];
   } else if (progress > 1) {
@@ -1203,11 +1223,12 @@ void NativeWindowMac::ToggleTabBar() {
 }
 
 bool NativeWindowMac::AddTabbedWindow(NativeWindow* window) {
-  if (window_ == window->GetNativeWindow()) {
+  if (window_ == window->GetNativeWindow().GetNativeNSWindow()) {
     return false;
   } else {
     if (@available(macOS 10.12, *))
-      [window_ addTabbedWindow:window->GetNativeWindow() ordered:NSWindowAbove];
+      [window_ addTabbedWindow:window->GetNativeWindow().GetNativeNSWindow()
+                       ordered:NSWindowAbove];
   }
   return true;
 }
@@ -1226,84 +1247,81 @@ bool NativeWindowMac::SetWindowButtonVisibility(bool visible) {
 }
 
 void NativeWindowMac::SetVibrancy(const std::string& type) {
-  if (@available(macOS 10.10, *)) {
-    NSView* vibrant_view = [window_ vibrantView];
+  NSView* vibrant_view = [window_ vibrantView];
 
-    if (type.empty()) {
-      if (background_color_before_vibrancy_) {
-        [window_ setBackgroundColor:background_color_before_vibrancy_];
-        [window_ setTitlebarAppearsTransparent:transparency_before_vibrancy_];
-      }
-      if (vibrant_view == nil)
-        return;
-
-      [vibrant_view removeFromSuperview];
-      [window_ setVibrantView:nil];
-
+  if (type.empty()) {
+    if (background_color_before_vibrancy_) {
+      [window_ setBackgroundColor:background_color_before_vibrancy_];
+      [window_ setTitlebarAppearsTransparent:transparency_before_vibrancy_];
+    }
+    if (vibrant_view == nil)
       return;
-    }
 
-    background_color_before_vibrancy_.reset([[window_ backgroundColor] retain]);
-    transparency_before_vibrancy_ = [window_ titlebarAppearsTransparent];
+    [vibrant_view removeFromSuperview];
+    [window_ setVibrantView:nil];
 
-    if (title_bar_style_ != NORMAL) {
-      [window_ setTitlebarAppearsTransparent:YES];
-      [window_ setBackgroundColor:[NSColor clearColor]];
-    }
-
-    NSVisualEffectView* effect_view = (NSVisualEffectView*)vibrant_view;
-    if (effect_view == nil) {
-      effect_view = [[[NSVisualEffectView alloc]
-          initWithFrame:[[window_ contentView] bounds]] autorelease];
-      [window_ setVibrantView:(NSView*)effect_view];
-
-      [effect_view
-          setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-      [effect_view setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
-      [effect_view setState:NSVisualEffectStateActive];
-      [[window_ contentView] addSubview:effect_view
-                             positioned:NSWindowBelow
-                             relativeTo:nil];
-    }
-
-    NSVisualEffectMaterial vibrancyType = NSVisualEffectMaterialLight;
-
-    if (type == "appearance-based") {
-      vibrancyType = NSVisualEffectMaterialAppearanceBased;
-    } else if (type == "light") {
-      vibrancyType = NSVisualEffectMaterialLight;
-    } else if (type == "dark") {
-      vibrancyType = NSVisualEffectMaterialDark;
-    } else if (type == "titlebar") {
-      vibrancyType = NSVisualEffectMaterialTitlebar;
-    }
-
-    if (@available(macOS 10.11, *)) {
-      // TODO(kevinsawicki): Use NSVisualEffectMaterial* constants directly once
-      // they are available in the minimum SDK version
-      if (type == "selection") {
-        // NSVisualEffectMaterialSelection
-        vibrancyType = static_cast<NSVisualEffectMaterial>(4);
-      } else if (type == "menu") {
-        // NSVisualEffectMaterialMenu
-        vibrancyType = static_cast<NSVisualEffectMaterial>(5);
-      } else if (type == "popover") {
-        // NSVisualEffectMaterialPopover
-        vibrancyType = static_cast<NSVisualEffectMaterial>(6);
-      } else if (type == "sidebar") {
-        // NSVisualEffectMaterialSidebar
-        vibrancyType = static_cast<NSVisualEffectMaterial>(7);
-      } else if (type == "medium-light") {
-        // NSVisualEffectMaterialMediumLight
-        vibrancyType = static_cast<NSVisualEffectMaterial>(8);
-      } else if (type == "ultra-dark") {
-        // NSVisualEffectMaterialUltraDark
-        vibrancyType = static_cast<NSVisualEffectMaterial>(9);
-      }
-    }
-
-    [effect_view setMaterial:vibrancyType];
+    return;
   }
+
+  background_color_before_vibrancy_.reset([[window_ backgroundColor] retain]);
+  transparency_before_vibrancy_ = [window_ titlebarAppearsTransparent];
+
+  if (title_bar_style_ != NORMAL) {
+    [window_ setTitlebarAppearsTransparent:YES];
+    [window_ setBackgroundColor:[NSColor clearColor]];
+  }
+
+  NSVisualEffectView* effect_view = (NSVisualEffectView*)vibrant_view;
+  if (effect_view == nil) {
+    effect_view = [[[NSVisualEffectView alloc]
+        initWithFrame:[[window_ contentView] bounds]] autorelease];
+    [window_ setVibrantView:(NSView*)effect_view];
+
+    [effect_view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [effect_view setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+    [effect_view setState:NSVisualEffectStateActive];
+    [[window_ contentView] addSubview:effect_view
+                           positioned:NSWindowBelow
+                           relativeTo:nil];
+  }
+
+  NSVisualEffectMaterial vibrancyType = NSVisualEffectMaterialLight;
+
+  if (type == "appearance-based") {
+    vibrancyType = NSVisualEffectMaterialAppearanceBased;
+  } else if (type == "light") {
+    vibrancyType = NSVisualEffectMaterialLight;
+  } else if (type == "dark") {
+    vibrancyType = NSVisualEffectMaterialDark;
+  } else if (type == "titlebar") {
+    vibrancyType = NSVisualEffectMaterialTitlebar;
+  }
+
+  if (@available(macOS 10.11, *)) {
+    // TODO(kevinsawicki): Use NSVisualEffectMaterial* constants directly once
+    // they are available in the minimum SDK version
+    if (type == "selection") {
+      // NSVisualEffectMaterialSelection
+      vibrancyType = static_cast<NSVisualEffectMaterial>(4);
+    } else if (type == "menu") {
+      // NSVisualEffectMaterialMenu
+      vibrancyType = static_cast<NSVisualEffectMaterial>(5);
+    } else if (type == "popover") {
+      // NSVisualEffectMaterialPopover
+      vibrancyType = static_cast<NSVisualEffectMaterial>(6);
+    } else if (type == "sidebar") {
+      // NSVisualEffectMaterialSidebar
+      vibrancyType = static_cast<NSVisualEffectMaterial>(7);
+    } else if (type == "medium-light") {
+      // NSVisualEffectMaterialMediumLight
+      vibrancyType = static_cast<NSVisualEffectMaterial>(8);
+    } else if (type == "ultra-dark") {
+      // NSVisualEffectMaterialUltraDark
+      vibrancyType = static_cast<NSVisualEffectMaterial>(9);
+    }
+  }
+
+  [effect_view setMaterial:vibrancyType];
 }
 
 void NativeWindowMac::SetTouchBar(
@@ -1404,6 +1422,8 @@ void NativeWindowMac::AddContentViewLayers() {
     if (title_bar_style_ == CUSTOM_BUTTONS_ON_HOVER) {
       buttons_view_.reset(
           [[CustomWindowButtonView alloc] initWithFrame:NSZeroRect]);
+      // NSWindowStyleMaskFullSizeContentView does not work with zoom button
+      SetFullScreenable(false);
       [[window_ contentView] addSubview:buttons_view_];
     } else {
       if (title_bar_style_ != NORMAL)
@@ -1430,7 +1450,8 @@ void NativeWindowMac::InternalSetParentWindow(NativeWindow* parent,
   NativeWindow::SetParentWindow(parent);
 
   // Do not remove/add if we are already properly attached.
-  if (attach && parent && [window_ parentWindow] == parent->GetNativeWindow())
+  if (attach && parent &&
+      [window_ parentWindow] == parent->GetNativeWindow().GetNativeNSWindow())
     return;
 
   // Remove current parent window.
@@ -1440,12 +1461,9 @@ void NativeWindowMac::InternalSetParentWindow(NativeWindow* parent,
   // Set new parent window.
   // Note that this method will force the window to become visible.
   if (parent && attach)
-    [parent->GetNativeWindow() addChildWindow:window_ ordered:NSWindowAbove];
-}
-
-void NativeWindowMac::ShowWindowButton(NSWindowButton button) {
-  auto view = [window_ standardWindowButton:button];
-  [view.superview addSubview:view positioned:NSWindowAbove relativeTo:nil];
+    [parent->GetNativeWindow().GetNativeNSWindow()
+        addChildWindow:window_
+               ordered:NSWindowAbove];
 }
 
 void NativeWindowMac::SetForwardMouseMessages(bool forward) {

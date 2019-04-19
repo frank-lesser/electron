@@ -2,11 +2,19 @@
 
 if (!process.env.CI) require('dotenv-safe').load()
 require('colors')
-const args = require('minimist')(process.argv.slice(2))
+const args = require('minimist')(process.argv.slice(2), {
+  boolean: [
+    'validateRelease',
+    'skipVersionCheck',
+    'automaticRelease',
+    'verboseNugget'
+  ],
+  default: { 'verboseNugget': false }
+})
 const fs = require('fs')
 const { execSync } = require('child_process')
-const GitHub = require('github')
 const nugget = require('nugget')
+const got = require('got')
 const pkg = require('../package.json')
 const pkgVersion = `v${pkg.version}`
 const pass = '\u2713'.green
@@ -15,25 +23,27 @@ const fail = '\u2717'.red
 const sumchecker = require('sumchecker')
 const temp = require('temp').track()
 const { URL } = require('url')
+
+const octokit = require('@octokit/rest')()
+octokit.authenticate({
+  type: 'token',
+  token: process.env.ELECTRON_GITHUB_TOKEN
+})
+
 const targetRepo = pkgVersion.indexOf('nightly') > 0 ? 'nightlies' : 'electron'
 let failureCount = 0
 
-const github = new GitHub({
-  followRedirects: false
-})
-github.authenticate({ type: 'token', token: process.env.ELECTRON_GITHUB_TOKEN })
-
 async function getDraftRelease (version, skipValidation) {
-  const releaseInfo = await github.repos.getReleases({ owner: 'electron', repo: targetRepo })
-  let versionToCheck
-  if (version) {
-    versionToCheck = version
-  } else {
-    versionToCheck = pkgVersion
-  }
-  const drafts = releaseInfo.data
-    .filter(release => release.tag_name === versionToCheck &&
-      release.draft === true)
+  const releaseInfo = await octokit.repos.listReleases({
+    owner: 'electron',
+    repo: targetRepo
+  })
+
+  const versionToCheck = version || pkgVersion
+  const drafts = releaseInfo.data.filter(release => {
+    return release.tag_name === versionToCheck && release.draft === true
+  })
+
   const draft = drafts[0]
   if (!skipValidation) {
     failureCount = 0
@@ -157,9 +167,7 @@ function runScript (scriptName, scriptArgs, cwd) {
   const scriptOptions = {
     encoding: 'UTF-8'
   }
-  if (cwd) {
-    scriptOptions.cwd = cwd
-  }
+  if (cwd) scriptOptions.cwd = cwd
   try {
     return execSync(scriptCommand, scriptOptions)
   } catch (err) {
@@ -187,10 +195,10 @@ async function createReleaseShasums (release) {
   const existingAssets = release.assets.filter(asset => asset.name === fileName)
   if (existingAssets.length > 0) {
     console.log(`${fileName} already exists on GitHub; deleting before creating new file.`)
-    await github.repos.deleteAsset({
+    await octokit.repos.deleteReleaseAsset({
       owner: 'electron',
       repo: targetRepo,
-      id: existingAssets[0].id
+      asset_id: existingAssets[0].id
     }).catch(err => {
       console.log(`${fail} Error deleting ${fileName} on GitHub:`, err)
     })
@@ -198,26 +206,30 @@ async function createReleaseShasums (release) {
   console.log(`Creating and uploading the release ${fileName}.`)
   const scriptPath = path.join(__dirname, 'merge-electron-checksums.py')
   const checksums = runScript(scriptPath, ['-v', pkgVersion])
+
   console.log(`${pass} Generated release SHASUMS.`)
   const filePath = await saveShaSumFile(checksums, fileName)
+
   console.log(`${pass} Created ${fileName} file.`)
-  await uploadShasumFile(filePath, fileName, release)
+  await uploadShasumFile(filePath, fileName, release.id)
+
   console.log(`${pass} Successfully uploaded ${fileName} to GitHub.`)
 }
 
-async function uploadShasumFile (filePath, fileName, release) {
-  const githubOpts = {
-    owner: 'electron',
-    repo: targetRepo,
-    id: release.id,
-    filePath,
+async function uploadShasumFile (filePath, fileName, releaseId) {
+  const uploadUrl = `https://uploads.github.com/repos/electron/${targetRepo}/releases/${releaseId}/assets{?name,label}`
+  return octokit.repos.uploadReleaseAsset({
+    url: uploadUrl,
+    headers: {
+      'content-type': 'text/plain',
+      'content-length': fs.statSync(filePath).size
+    },
+    file: fs.createReadStream(filePath),
     name: fileName
-  }
-  return github.repos.uploadAsset(githubOpts)
-    .catch(err => {
-      console.log(`${fail} Error uploading ${filePath} to GitHub:`, err)
-      process.exit(1)
-    })
+  }).catch(err => {
+    console.log(`${fail} Error uploading ${filePath} to GitHub:`, err)
+    process.exit(1)
+  })
 }
 
 function saveShaSumFile (checksums, fileName) {
@@ -241,18 +253,16 @@ function saveShaSumFile (checksums, fileName) {
 }
 
 async function publishRelease (release) {
-  const githubOpts = {
+  return octokit.repos.updateRelease({
     owner: 'electron',
     repo: targetRepo,
-    id: release.id,
+    release_id: release.id,
     tag_name: release.tag_name,
     draft: false
-  }
-  return github.repos.editRelease(githubOpts)
-    .catch(err => {
-      console.log(`${fail} Error publishing release:`, err)
-      process.exit(1)
-    })
+  }).catch(err => {
+    console.log(`${fail} Error publishing release:`, err)
+    process.exit(1)
+  })
 }
 
 async function makeRelease (releaseToValidate) {
@@ -272,6 +282,7 @@ async function makeRelease (releaseToValidate) {
     uploadIndexJson()
 
     await createReleaseShasums(draftRelease)
+
     // Fetch latest version of release before verifying
     draftRelease = await getDraftRelease(pkgVersion, true)
     await validateReleaseAssets(draftRelease)
@@ -295,24 +306,36 @@ async function makeTempDir () {
 
 async function verifyAssets (release) {
   const downloadDir = await makeTempDir()
-  const githubOpts = {
-    owner: 'electron',
-    repo: targetRepo,
-    headers: {
-      Accept: 'application/octet-stream'
-    }
-  }
+
   console.log(`Downloading files from GitHub to verify shasums`)
   const shaSumFile = 'SHASUMS256.txt'
-  let filesToCheck = await Promise.all(release.assets.map(async (asset) => {
-    githubOpts.id = asset.id
-    const assetDetails = await github.repos.getAsset(githubOpts)
-    await downloadFiles(assetDetails.meta.location, downloadDir, false, asset.name)
+
+  let filesToCheck = await Promise.all(release.assets.map(async asset => {
+    const requestOptions = await octokit.repos.getReleaseAsset.endpoint({
+      owner: 'electron',
+      repo: targetRepo,
+      asset_id: asset.id,
+      headers: {
+        Accept: 'application/octet-stream'
+      }
+    })
+
+    const { url, headers } = requestOptions
+    headers.authorization = `token ${process.env.ELECTRON_GITHUB_TOKEN}`
+
+    const response = await got(url, {
+      followRedirect: false,
+      method: 'HEAD',
+      headers
+    })
+
+    await downloadFiles(response.headers.location, downloadDir, asset.name)
     return asset.name
   })).catch(err => {
     console.log(`${fail} Error downloading files from GitHub`, err)
     process.exit(1)
   })
+
   filesToCheck = filesToCheck.filter(fileName => fileName !== shaSumFile)
   let checkerOpts
   await validateChecksums({
@@ -325,21 +348,17 @@ async function verifyAssets (release) {
   })
 }
 
-function downloadFiles (urls, directory, quiet, targetName) {
+function downloadFiles (urls, directory, targetName) {
   return new Promise((resolve, reject) => {
-    const nuggetOpts = {
-      dir: directory
-    }
-    if (quiet) {
-      nuggetOpts.quiet = quiet
-    }
-    if (targetName) {
-      nuggetOpts.target = targetName
-    }
+    const nuggetOpts = { dir: directory }
+    nuggetOpts.quiet = !args.verboseNugget
+    if (targetName) nuggetOpts.target = targetName
+
     nugget(urls, nuggetOpts, (err) => {
       if (err) {
         reject(err)
       } else {
+        console.log(`${pass} all files downloaded successfully!`)
         resolve()
       }
     })
@@ -369,7 +388,7 @@ async function verifyShasums (urls, isS3) {
           if (s3VersionPathIdx !== -1 && filename.indexof('SHASUMS') === -1) {
             filesToCheck.push(filename)
           }
-          await downloadFiles(url, downloadDir, true)
+          await downloadFiles(url, downloadDir)
         } else {
           const subDirectory = dirname.substr(s3VersionPathIdx + s3VersionPath.length)
           const fileDirectory = path.join(downloadDir, subDirectory)
@@ -379,7 +398,7 @@ async function verifyShasums (urls, isS3) {
             fs.mkdirSync(fileDirectory)
           }
           filesToCheck.push(path.join(subDirectory, filename))
-          await downloadFiles(url, fileDirectory, true)
+          await downloadFiles(url, fileDirectory)
         }
       }))
     }

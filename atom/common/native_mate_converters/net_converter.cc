@@ -11,6 +11,7 @@
 
 #include "atom/common/native_mate_converters/gurl_converter.h"
 #include "atom/common/native_mate_converters/value_converter.h"
+#include "atom/common/node_includes.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -24,8 +25,6 @@
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "storage/browser/blob/upload_blob_element_reader.h"
-
-#include "atom/common/node_includes.h"
 
 namespace mate {
 
@@ -198,16 +197,16 @@ bool Converter<net::HttpResponseHeaders*>::FromV8(
 
   auto context = isolate->GetCurrentContext();
   auto headers = v8::Local<v8::Object>::Cast(val);
-  auto keys = headers->GetOwnPropertyNames();
+  auto keys = headers->GetOwnPropertyNames(context).ToLocalChecked();
   for (uint32_t i = 0; i < keys->Length(); i++) {
-    v8::Local<v8::String> keyVal;
-    if (!keys->Get(i)->ToString(context).ToLocal(&keyVal)) {
+    v8::Local<v8::Value> keyVal;
+    if (!keys->Get(context, i).ToLocal(&keyVal)) {
       return false;
     }
     std::string key;
     mate::ConvertFromV8(isolate, keyVal, &key);
 
-    auto localVal = headers->Get(keyVal);
+    auto localVal = headers->Get(context, keyVal).ToLocalChecked();
     if (localVal->IsArray()) {
       auto values = v8::Local<v8::Array>::Cast(localVal);
       for (uint32_t j = 0; j < values->Length(); j++) {

@@ -118,17 +118,17 @@ class AtomNetworkDelegate : public net::NetworkDelegate {
       AuthCallback callback,
       net::AuthCredentials* credentials) override;
   bool OnCanGetCookies(const net::URLRequest& request,
-                       const net::CookieList& cookie_list) override;
+                       const net::CookieList& cookie_list,
+                       bool allowed_from_caller) override;
   bool OnCanSetCookie(const net::URLRequest& request,
                       const net::CanonicalCookie& cookie_line,
-                      net::CookieOptions* options) override;
+                      net::CookieOptions* options,
+                      bool allowed_from_caller) override;
   bool OnCanAccessFile(const net::URLRequest& request,
                        const base::FilePath& original_path,
                        const base::FilePath& absolute_path) const override;
-  bool OnCanEnablePrivacyMode(
-      const GURL& url,
-      const GURL& first_party_for_cookies) const override;
-  bool OnAreExperimentalCookieFeaturesEnabled() const override;
+  bool OnForcePrivacyMode(const GURL& url,
+                          const GURL& first_party_for_cookies) const override;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const net::URLRequest& request,
       const GURL& target_url,

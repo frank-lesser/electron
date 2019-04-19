@@ -13,9 +13,9 @@
 #include "base/callback.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/libgtkui/gtk_signal.h"
 #include "chrome/browser/ui/libgtkui/gtk_util.h"
 #include "chrome/browser/ui/libgtkui/skia_utils_gtk.h"
+#include "ui/base/glib/glib_signal.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/widget/desktop_aura/x11_desktop_handler.h"
 
@@ -68,8 +68,8 @@ class GtkMessageBox : public NativeWindowObserver {
       GtkWidget* w = gtk_image_new_from_pixbuf(scaled_pixbuf);
       gtk_message_dialog_set_image(GTK_MESSAGE_DIALOG(dialog_), w);
       gtk_widget_show(w);
-      g_clear_pointer(&scaled_pixbuf, gdk_pixbuf_unref);
-      g_clear_pointer(&pixbuf, gdk_pixbuf_unref);
+      g_clear_pointer(&scaled_pixbuf, g_object_unref);
+      g_clear_pointer(&pixbuf, g_object_unref);
     }
 
     if (!checkbox_label.empty()) {
@@ -148,14 +148,12 @@ class GtkMessageBox : public NativeWindowObserver {
   int RunSynchronous() {
     Show();
     int response = gtk_dialog_run(GTK_DIALOG(dialog_));
-    if (response < 0)
-      return cancel_id_;
-    else
-      return response;
+    return (response < 0) ? cancel_id_ : response;
   }
 
-  void RunAsynchronous(const MessageBoxCallback& callback) {
-    callback_ = callback;
+  void RunAsynchronous(MessageBoxCallback callback) {
+    callback_ = std::move(callback);
+
     g_signal_connect(dialog_, "delete-event",
                      G_CALLBACK(gtk_widget_hide_on_delete), nullptr);
     g_signal_connect(dialog_, "response", G_CALLBACK(OnResponseDialogThunk),
@@ -168,8 +166,8 @@ class GtkMessageBox : public NativeWindowObserver {
     parent_ = nullptr;
   }
 
-  CHROMEGTK_CALLBACK_1(GtkMessageBox, void, OnResponseDialog, int);
-  CHROMEGTK_CALLBACK_0(GtkMessageBox, void, OnCheckboxToggled);
+  CHROMEG_CALLBACK_1(GtkMessageBox, void, OnResponseDialog, GtkWidget*, int);
+  CHROMEG_CALLBACK_0(GtkMessageBox, void, OnCheckboxToggled, GtkWidget*);
 
  private:
   atom::UnresponsiveSuppressor unresponsive_suppressor_;
@@ -190,9 +188,9 @@ void GtkMessageBox::OnResponseDialog(GtkWidget* widget, int response) {
   gtk_widget_hide(dialog_);
 
   if (response < 0)
-    callback_.Run(cancel_id_, checkbox_checked_);
+    std::move(callback_).Run(cancel_id_, checkbox_checked_);
   else
-    callback_.Run(response, checkbox_checked_);
+    std::move(callback_).Run(response, checkbox_checked_);
   delete this;
 }
 
@@ -202,16 +200,16 @@ void GtkMessageBox::OnCheckboxToggled(GtkWidget* widget) {
 
 }  // namespace
 
-int ShowMessageBox(NativeWindow* parent,
-                   MessageBoxType type,
-                   const std::vector<std::string>& buttons,
-                   int default_id,
-                   int cancel_id,
-                   int options,
-                   const std::string& title,
-                   const std::string& message,
-                   const std::string& detail,
-                   const gfx::ImageSkia& icon) {
+int ShowMessageBoxSync(NativeWindow* parent,
+                       MessageBoxType type,
+                       const std::vector<std::string>& buttons,
+                       int default_id,
+                       int cancel_id,
+                       int options,
+                       const std::string& title,
+                       const std::string& message,
+                       const std::string& detail,
+                       const gfx::ImageSkia& icon) {
   return GtkMessageBox(parent, type, buttons, default_id, cancel_id, title,
                        message, detail, "", false, icon)
       .RunSynchronous();
@@ -229,10 +227,10 @@ void ShowMessageBox(NativeWindow* parent,
                     const std::string& checkbox_label,
                     bool checkbox_checked,
                     const gfx::ImageSkia& icon,
-                    const MessageBoxCallback& callback) {
+                    MessageBoxCallback callback) {
   (new GtkMessageBox(parent, type, buttons, default_id, cancel_id, title,
                      message, detail, checkbox_label, checkbox_checked, icon))
-      ->RunAsynchronous(callback);
+      ->RunAsynchronous(std::move(callback));
 }
 
 void ShowErrorBox(const base::string16& title, const base::string16& content) {

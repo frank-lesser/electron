@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/metrics/field_trial.h"
 #include "base/timer/timer.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_main_parts.h"
@@ -28,7 +29,7 @@ class WMState;
 
 namespace atom {
 
-class AtomBindings;
+class ElectronBindings;
 class Browser;
 class JavascriptEnvironment;
 class NodeBindings;
@@ -73,7 +74,6 @@ class AtomBrowserMainParts : public content::BrowserMainParts {
 
  protected:
   // content::BrowserMainParts:
-  bool ShouldContentCreateFeatureList() override;
   int PreEarlyInitialization() override;
   void PostEarlyInitialization() override;
   int PreCreateThreads() override;
@@ -88,7 +88,6 @@ class AtomBrowserMainParts : public content::BrowserMainParts {
 
  private:
   void InitializeFeatureList();
-  void OverrideAppLogsPath();
   void PreMainMessageLoopStartCommon();
 
 #if defined(OS_POSIX)
@@ -113,7 +112,6 @@ class AtomBrowserMainParts : public content::BrowserMainParts {
 #endif
 
   std::unique_ptr<views::LayoutProvider> layout_provider_;
-  std::string custom_locale_;
 
   // A fake BrowserProcess object that used to feed the source code from chrome.
   std::unique_ptr<BrowserProcessImpl> fake_browser_process_;
@@ -124,10 +122,11 @@ class AtomBrowserMainParts : public content::BrowserMainParts {
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<JavascriptEnvironment> js_env_;
   std::unique_ptr<NodeBindings> node_bindings_;
-  std::unique_ptr<AtomBindings> atom_bindings_;
+  std::unique_ptr<ElectronBindings> electron_bindings_;
   std::unique_ptr<NodeEnvironment> node_env_;
   std::unique_ptr<NodeDebugger> node_debugger_;
   std::unique_ptr<IconManager> icon_manager_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   base::RepeatingTimer gc_timer_;
 

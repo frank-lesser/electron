@@ -8,12 +8,12 @@ const ws = require('ws')
 const url = require('url')
 const ChildProcess = require('child_process')
 const { ipcRenderer, remote } = require('electron')
-const { closeWindow } = require('./window-helpers')
-const { resolveGetters } = require('./assert-helpers')
 const { emittedOnce } = require('./events-helpers')
+const { closeWindow, waitForWebContentsToLoad } = require('./window-helpers')
+const { resolveGetters } = require('./assert-helpers')
 const { app, BrowserWindow, ipcMain, protocol, session, webContents } = remote
 const isCI = remote.getGlobal('isCi')
-const features = process.atomBinding('features')
+const features = process.electronBinding('features')
 
 const { expect } = chai
 chai.use(dirtyChai)
@@ -53,13 +53,37 @@ describe('chromium feature', () => {
       it('should set the locale', (done) => testLocale('fr', 'fr', done))
       it('should not set an invalid locale', (done) => testLocale('asdfkl', currentLocale, done))
     })
+
+    describe('--remote-debugging-port switch', () => {
+      it('should display the discovery page', (done) => {
+        const electronPath = remote.getGlobal('process').execPath
+        let output = ''
+        const appProcess = ChildProcess.spawn(electronPath, [`--remote-debugging-port=`])
+
+        appProcess.stderr.on('data', (data) => {
+          output += data
+          const m = /DevTools listening on ws:\/\/127.0.0.1:(\d+)\//.exec(output)
+          if (m) {
+            appProcess.stderr.removeAllListeners('data')
+            const port = m[1]
+            http.get(`http://127.0.0.1:${port}`, (res) => {
+              res.destroy()
+              appProcess.kill()
+              expect(res.statusCode).to.eql(200)
+              expect(parseInt(res.headers['content-length'])).to.be.greaterThan(0)
+              done()
+            })
+          }
+        })
+      })
+    })
   })
 
   afterEach(() => closeWindow(w).then(() => { w = null }))
 
   describe('heap snapshot', () => {
     it('does not crash', function () {
-      process.atomBinding('v8_util').takeHeapSnapshot()
+      process.electronBinding('v8_util').takeHeapSnapshot()
     })
   })
 
@@ -88,12 +112,7 @@ describe('chromium feature', () => {
 
   describe('loading jquery', () => {
     it('does not crash', (done) => {
-      w = new BrowserWindow({
-        show: false,
-        webPreferences: {
-          nodeIntegration: false
-        }
-      })
+      w = new BrowserWindow({ show: false })
       w.webContents.once('did-finish-load', () => { done() })
       w.webContents.once('crashed', () => done(new Error('WebContents crashed.')))
       w.loadFile(path.join(fixtures, 'pages', 'jquery.html'))
@@ -152,11 +171,12 @@ describe('chromium feature', () => {
       w = new BrowserWindow({
         show: false,
         webPreferences: {
+          nodeIntegration: true,
           session: ses
         }
       })
-      w.webContents.on('ipc-message', (event, args) => {
-        if (args[0] === 'deviceIds') deviceIds.push(args[1])
+      w.webContents.on('ipc-message', (event, channel, deviceId) => {
+        if (channel === 'deviceIds') deviceIds.push(deviceId)
         if (deviceIds.length === 2) {
           assert.notDeepStrictEqual(deviceIds[0], deviceIds[1])
           closeWindow(w).then(() => {
@@ -164,7 +184,7 @@ describe('chromium feature', () => {
             done()
           }).catch((error) => done(error))
         } else {
-          ses.clearStorageData(options, () => {
+          ses.clearStorageData(options).then(() => {
             w.webContents.reload()
           })
         }
@@ -192,19 +212,20 @@ describe('chromium feature', () => {
       w = new BrowserWindow({
         show: false,
         webPreferences: {
+          nodeIntegration: true,
           partition: 'sw-file-scheme-spec'
         }
       })
-      w.webContents.on('ipc-message', (event, args) => {
-        if (args[0] === 'reload') {
+      w.webContents.on('ipc-message', (event, channel, message) => {
+        if (channel === 'reload') {
           w.webContents.reload()
-        } else if (args[0] === 'error') {
-          done(args[1])
-        } else if (args[0] === 'response') {
-          assert.strictEqual(args[1], 'Hello from serviceWorker!')
+        } else if (channel === 'error') {
+          done(message)
+        } else if (channel === 'response') {
+          assert.strictEqual(message, 'Hello from serviceWorker!')
           session.fromPartition('sw-file-scheme-spec').clearStorageData({
             storages: ['serviceworkers']
-          }, () => done())
+          }).then(() => done())
         }
       })
       w.webContents.on('crashed', () => done(new Error('WebContents crashed.')))
@@ -229,19 +250,22 @@ describe('chromium feature', () => {
 
       w = new BrowserWindow({
         show: false,
-        webPreferences: { session: customSession }
+        webPreferences: {
+          nodeIntegration: true,
+          session: customSession
+        }
       })
-      w.webContents.on('ipc-message', (event, args) => {
-        if (args[0] === 'reload') {
+      w.webContents.on('ipc-message', (event, channel, message) => {
+        if (channel === 'reload') {
           w.webContents.reload()
-        } else if (args[0] === 'error') {
-          done(`unexpected error : ${args[1]}`)
-        } else if (args[0] === 'response') {
-          assert.strictEqual(args[1], 'Hello from serviceWorker!')
+        } else if (channel === 'error') {
+          done(`unexpected error : ${message}`)
+        } else if (channel === 'response') {
+          assert.strictEqual(message, 'Hello from serviceWorker!')
           customSession.clearStorageData({
             storages: ['serviceworkers']
-          }, () => {
-            customSession.protocol.uninterceptProtocol('file', (error) => done(error))
+          }).then(() => {
+            customSession.protocol.uninterceptProtocol('file', error => done(error))
           })
         }
       })
@@ -270,11 +294,12 @@ describe('chromium feature', () => {
       w = new BrowserWindow({
         show: false,
         webPreferences: {
+          nodeIntegration: true,
           partition: 'geolocation-spec'
         }
       })
-      w.webContents.on('ipc-message', (event, args) => {
-        if (args[0] === 'success') {
+      w.webContents.on('ipc-message', (event, channel) => {
+        if (channel === 'success') {
           done()
         } else {
           done('unexpected response from geolocation api')
@@ -358,26 +383,6 @@ describe('chromium feature', () => {
         protocol: 'file',
         query: {
           p: `${fixtures}/pages/window-opener-node.html`
-        },
-        slashes: true
-      })
-      b = window.open(windowUrl, '', 'nodeIntegration=no,show=no')
-    })
-
-    it('disables webviewTag when node integration is disabled on the parent window', (done) => {
-      let b = null
-      listener = (event) => {
-        assert.strictEqual(event.data.isWebViewUndefined, true)
-        b.close()
-        done()
-      }
-      window.addEventListener('message', listener)
-
-      const windowUrl = require('url').format({
-        pathname: `${fixtures}/pages/window-opener-no-web-view-tag.html`,
-        protocol: 'file',
-        query: {
-          p: `${fixtures}/pages/window-opener-web-view.html`
         },
         slashes: true
       })
@@ -491,7 +496,7 @@ describe('chromium feature', () => {
       }
       app.once('browser-window-created', (event, window) => {
         window.webContents.once('did-finish-load', () => {
-          assert.strictEqual(b.location, targetURL)
+          assert.strictEqual(b.location.href, targetURL)
           b.close()
           done()
         })
@@ -515,27 +520,28 @@ describe('chromium feature', () => {
       b = window.open('about:blank')
     })
 
-    it('open a blank page when no URL is specified', (done) => {
-      let b = null
-      app.once('browser-window-created', (event, { webContents }) => {
-        webContents.once('did-finish-load', () => {
-          const { location } = b
-          b.close()
-          assert.strictEqual(location, 'about:blank')
+    it('open a blank page when no URL is specified', async () => {
+      const browserWindowCreated = emittedOnce(app, 'browser-window-created')
+      const w = window.open()
+      try {
+        const [, { webContents }] = await browserWindowCreated
+        await waitForWebContentsToLoad(webContents)
+        assert.strictEqual(w.location.href, 'about:blank')
+      } finally {
+        w.close()
+      }
+    })
 
-          let c = null
-          app.once('browser-window-created', (event, { webContents }) => {
-            webContents.once('did-finish-load', () => {
-              const { location } = c
-              c.close()
-              assert.strictEqual(location, 'about:blank')
-              done()
-            })
-          })
-          c = window.open('')
-        })
-      })
-      b = window.open()
+    it('open a blank page when an empty URL is specified', async () => {
+      const browserWindowCreated = emittedOnce(app, 'browser-window-created')
+      const w = window.open('')
+      try {
+        const [, { webContents }] = await browserWindowCreated
+        await waitForWebContentsToLoad(webContents)
+        assert.strictEqual(w.location.href, 'about:blank')
+      } finally {
+        w.close()
+      }
     })
 
     it('throws an exception when the arguments cannot be converted to strings', () => {
@@ -579,13 +585,18 @@ describe('chromium feature', () => {
 
   describe('window.opener', () => {
     const url = `file://${fixtures}/pages/window-opener.html`
-    it('is null for main window', (done) => {
-      w = new BrowserWindow({ show: false })
-      w.webContents.once('ipc-message', (event, args) => {
-        assert.deepStrictEqual(args, ['opener', null])
-        done()
+    it('is null for main window', async () => {
+      w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: true
+        }
       })
+      const promise = emittedOnce(w.webContents, 'ipc-message')
       w.loadFile(path.join(fixtures, 'pages', 'window-opener.html'))
+      const [, channel, opener] = await promise
+      expect(channel).to.equal('opener')
+      expect(opener).to.equal(null)
     })
 
     it('is not null for window opened by window.open', (done) => {
@@ -621,7 +632,7 @@ describe('chromium feature', () => {
 
     it('does nothing when origin of current window does not match opener', (done) => {
       listener = (event) => {
-        assert.strictEqual(event.data, null)
+        assert.strictEqual(event.data, '')
         done()
       }
       window.addEventListener('message', listener)
@@ -670,7 +681,7 @@ describe('chromium feature', () => {
     it('does nothing when origin of webview src URL does not match opener', (done) => {
       webview = new WebView()
       webview.addEventListener('console-message', (e) => {
-        assert.strictEqual(e.message, 'null')
+        assert.strictEqual(e.message, '')
         done()
       })
       webview.setAttribute('allowpopups', 'on')
@@ -984,7 +995,9 @@ describe('chromium feature', () => {
       })
 
       beforeEach(() => {
-        contents = webContents.create({})
+        contents = webContents.create({
+          nodeIntegration: true
+        })
       })
 
       afterEach(() => {
@@ -993,9 +1006,9 @@ describe('chromium feature', () => {
       })
 
       it('cannot access localStorage', (done) => {
-        ipcMain.once('local-storage-response', (event, error) => {
+        ipcMain.once('local-storage-response', (event, message) => {
           assert.strictEqual(
-            error,
+            message,
             'Failed to read the \'localStorage\' property from \'Window\': Access is denied for this document.')
           done()
         })
@@ -1016,7 +1029,7 @@ describe('chromium feature', () => {
         ipcMain.once('web-sql-response', (event, error) => {
           assert.strictEqual(
             error,
-            'An attempt was made to break through the security policy of the user agent.')
+            'Failed to execute \'openDatabase\' on \'Window\': Access to the WebDatabase API is denied in this context.')
           done()
         })
         contents.loadURL(`${protocolName}://host/WebSQL`)
@@ -1024,19 +1037,78 @@ describe('chromium feature', () => {
 
       it('cannot access indexedDB', (done) => {
         ipcMain.once('indexed-db-response', (event, error) => {
-          assert.strictEqual(error, 'The user denied permission to access the database.')
+          assert.strictEqual(
+            error,
+            'Failed to execute \'open\' on \'IDBFactory\': access to the Indexed Database API is denied in this context.')
           done()
         })
         contents.loadURL(`${protocolName}://host/indexedDB`)
       })
 
       it('cannot access cookie', (done) => {
-        ipcMain.once('cookie-response', (event, cookie) => {
-          assert(!cookie)
+        ipcMain.once('cookie-response', (event, error) => {
+          assert.strictEqual(
+            error,
+            'Failed to set the \'cookie\' property on \'Document\': Access is denied for this document.')
           done()
         })
         contents.loadURL(`${protocolName}://host/cookie`)
       })
+    })
+
+    describe('can be accessed', () => {
+      let server = null
+      before((done) => {
+        server = http.createServer((req, res) => {
+          const respond = () => {
+            if (req.url === '/redirect-cross-site') {
+              res.setHeader('Location', `${server.cross_site_url}/redirected`)
+              res.statusCode = 302
+              res.end()
+            } else if (req.url === '/redirected') {
+              res.end('<html><script>window.localStorage</script></html>')
+            } else {
+              res.end()
+            }
+          }
+          setTimeout(respond, 0)
+        })
+        server.listen(0, '127.0.0.1', () => {
+          server.url = `http://127.0.0.1:${server.address().port}`
+          server.cross_site_url = `http://localhost:${server.address().port}`
+          done()
+        })
+      })
+
+      after(() => {
+        server.close()
+        server = null
+      })
+
+      const testLocalStorageAfterXSiteRedirect = (testTitle, extraPreferences = {}) => {
+        it(testTitle, (done) => {
+          w = new BrowserWindow({
+            show: false,
+            ...extraPreferences
+          })
+          let redirected = false
+          w.webContents.on('crashed', () => {
+            assert.fail('renderer crashed / was killed')
+          })
+          w.webContents.on('did-redirect-navigation', (event, url) => {
+            assert.strictEqual(url, `${server.cross_site_url}/redirected`)
+            redirected = true
+          })
+          w.webContents.on('did-finish-load', () => {
+            assert.strictEqual(redirected, true, 'didnt redirect')
+            done()
+          })
+          w.loadURL(`${server.url}/redirect-cross-site`)
+        })
+      }
+
+      testLocalStorageAfterXSiteRedirect('after a cross-site redirect')
+      testLocalStorageAfterXSiteRedirect('after a cross-site redirect in sandbox mode', { sandbox: true })
     })
   })
 
@@ -1326,21 +1398,124 @@ describe('chromium feature', () => {
       await new Promise((resolve) => { utter.onend = resolve })
     })
   })
+
+  describe('focus handling', () => {
+    let webviewContents = null
+
+    beforeEach(async () => {
+      w = new BrowserWindow({
+        show: true,
+        webPreferences: {
+          nodeIntegration: true,
+          webviewTag: true
+        }
+      })
+
+      const webviewReady = emittedOnce(w.webContents, 'did-attach-webview')
+      await w.loadFile(path.join(fixtures, 'pages', 'tab-focus-loop-elements.html'))
+      const [, wvContents] = await webviewReady
+      webviewContents = wvContents
+      await emittedOnce(webviewContents, 'did-finish-load')
+      w.focus()
+    })
+
+    afterEach(() => {
+      webviewContents = null
+    })
+
+    const expectFocusChange = async () => {
+      const [, focusedElementId] = await emittedOnce(ipcMain, 'focus-changed')
+      return focusedElementId
+    }
+
+    describe('a TAB press', () => {
+      const tabPressEvent = {
+        type: 'keyDown',
+        keyCode: 'Tab'
+      }
+
+      it('moves focus to the next focusable item', async () => {
+        let focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(tabPressEvent)
+        let focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-1', `should start focused in element-1, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(tabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-2', `focus should've moved to element-2, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(tabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-wv-element-1', `focus should've moved to the webview's element-1, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        webviewContents.sendInputEvent(tabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-wv-element-2', `focus should've moved to the webview's element-2, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        webviewContents.sendInputEvent(tabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-3', `focus should've moved to element-3, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(tabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-1', `focus should've looped back to element-1, it's instead in ${focusedElementId}`)
+      })
+    })
+
+    describe('a SHIFT + TAB press', () => {
+      const shiftTabPressEvent = {
+        type: 'keyDown',
+        modifiers: ['Shift'],
+        keyCode: 'Tab'
+      }
+
+      it('moves focus to the previous focusable item', async () => {
+        let focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(shiftTabPressEvent)
+        let focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-3', `should start focused in element-3, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(shiftTabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-wv-element-2', `focus should've moved to the webview's element-2, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        webviewContents.sendInputEvent(shiftTabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-wv-element-1', `focus should've moved to the webview's element-1, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        webviewContents.sendInputEvent(shiftTabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-2', `focus should've moved to element-2, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(shiftTabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-1', `focus should've moved to element-1, it's instead in ${focusedElementId}`)
+
+        focusChange = expectFocusChange()
+        w.webContents.sendInputEvent(shiftTabPressEvent)
+        focusedElementId = await focusChange
+        assert.strictEqual(focusedElementId, 'BUTTON-element-3', `focus should've looped back to element-3, it's instead in ${focusedElementId}`)
+      })
+    })
+  })
 })
 
 describe('font fallback', () => {
   async function getRenderedFonts (html) {
     const w = new BrowserWindow({ show: false })
     try {
-      const loaded = emittedOnce(w.webContents, 'did-finish-load')
-      w.loadURL(`data:text/html,${html}`)
-      await loaded
+      await w.loadURL(`data:text/html,${html}`)
       w.webContents.debugger.attach()
-      const sendCommand = (...args) => new Promise((resolve, reject) => {
-        w.webContents.debugger.sendCommand(...args, (e, r) => {
-          if (e) { reject(e) } else { resolve(r) }
-        })
-      })
+      const sendCommand = (...args) => w.webContents.debugger.sendCommand(...args)
       const { nodeId } = (await sendCommand('DOM.getDocument')).root.children[0]
       await sendCommand('CSS.enable')
       const { fonts } = await sendCommand('CSS.getPlatformFontsForNode', { nodeId })

@@ -8,6 +8,12 @@ including rendering, navigation, and event routing. We currently recommend to no
 use the `webview` tag and to consider alternatives, like `iframe`, Electron's `BrowserView`,
 or an architecture that avoids embedded content altogether.
 
+## Enabling
+
+By default the `webview` tag is disabled in Electron >= 5.  You need to enable the tag by
+setting the `webviewTag` webPreferences option when constructing your `BrowserWindow`. For
+more information see the [BrowserWindow constructor docs](browser-window.md).
+
 ## Overview
 
 > Display external web content in an isolated frame and process.
@@ -102,19 +108,6 @@ Assigning `src` its own value will reload the current page.
 The `src` attribute can also accept data URLs, such as
 `data:text/plain,Hello, world!`.
 
-### `autosize`
-
-```html
-<webview src="https://www.github.com/" autosize minwidth="576" minheight="432"></webview>
-```
-
-When this attribute is present the `webview` container will automatically resize
-within the bounds specified by the attributes `minwidth`, `minheight`,
-`maxwidth`, and `maxheight`. These constraints do not impact the `webview`
-unless `autosize` is enabled. When `autosize` is enabled, the `webview`
-container size cannot be less than the minimum values or greater than the
-maximum.
-
 ### `nodeintegration`
 
 ```html
@@ -126,6 +119,17 @@ integration and can use node APIs like `require` and `process` to access low
 level system resources. Node integration is disabled by default in the guest
 page.
 
+### `nodeintegrationinsubframes`
+
+```html
+<webview src="http://www.google.com/" nodeintegrationinsubframes></webview>
+```
+
+Experimental option for enabling NodeJS support in sub-frames such as iframes
+inside the `webview`. All your preloads will load for every iframe, you can
+use `process.isMainFrame` to determine if you are in the main frame or not.
+This option is disabled by default in the guest page.
+
 ### `enableremotemodule`
 
 ```html
@@ -133,7 +137,7 @@ page.
 ```
 
 When this attribute is `false` the guest page in `webview` will not have access
-to the [`remote`](remote.md) module. The remote module is avaiable by default.
+to the [`remote`](remote.md) module. The remote module is available by default.
 
 ### `plugins`
 
@@ -157,6 +161,9 @@ will be loaded by `require` in guest page under the hood.
 When the guest page doesn't have node integration this script will still have
 access to all Node APIs, but global objects injected by Node will be deleted
 after this script has finished executing.
+
+**Note:** For security reasons, preload scripts can only be loaded from
+a subpath of the [app path](app.md#appgetapppath).
 
 **Note:** This option will be appear as `preloadURL` (not `preload`) in
 the `webPreferences` specified to the `will-attach-webview` event.
@@ -381,6 +388,23 @@ Injects CSS into the guest page.
 * `callback` Function (optional) - Called after script has been executed.
   * `result` Any
 
+Returns `Promise<any>` - A promise that resolves with the result of the executed code
+or is rejected if the result of the code is a rejected promise.
+
+Evaluates `code` in page. If `userGesture` is set, it will create the user
+gesture context in the page. HTML APIs like `requestFullScreen`, which require
+user action, can take advantage of this option for automation.
+
+**[Deprecated Soon](modernization/promisification.md)**
+
+### `<webview>.executeJavaScript(code[, userGesture])`
+
+* `code` String
+* `userGesture` Boolean (optional) - Default `false`.
+
+Returns `Promise<any>` - A promise that resolves with the result of the executed code
+or is rejected if the result of the code is a rejected promise.
+
 Evaluates `code` in page. If `userGesture` is set, it will create the user
 gesture context in the page. HTML APIs like `requestFullScreen`, which require
 user action, can take advantage of this option for automation.
@@ -407,6 +431,10 @@ Returns `Boolean` - Whether DevTools window of guest page is focused.
 * `y` Integer
 
 Starts inspecting element at position (`x`, `y`) of guest page.
+
+### `<webview>.inspectSharedWorker()`
+
+Opens the DevTools for the shared worker context present in the guest page.
 
 ### `<webview>.inspectServiceWorker()`
 
@@ -538,13 +566,43 @@ Prints `webview`'s web page. Same as `webContents.print([options])`.
 
 Prints `webview`'s web page as PDF, Same as `webContents.printToPDF(options, callback)`.
 
+**[Deprecated Soon](modernization/promisification.md)**
+
+### `<webview>.printToPDF(options)`
+
+* `options` Object
+  * `marginsType` Integer (optional) - Specifies the type of margins to use. Uses 0 for
+    default margin, 1 for no margin, and 2 for minimum margin.
+  * `pageSize` String | Size (optional) - Specify page size of the generated PDF. Can be `A3`,
+    `A4`, `A5`, `Legal`, `Letter`, `Tabloid` or an Object containing `height`
+    and `width` in microns.
+  * `printBackground` Boolean (optional) - Whether to print CSS backgrounds.
+  * `printSelectionOnly` Boolean (optional) - Whether to print selection only.
+  * `landscape` Boolean (optional) - `true` for landscape, `false` for portrait.
+
+Returns `Promise<Buffer>` - Resolves with the generated PDF data.
+
+Prints `webview`'s web page as PDF, Same as `webContents.printToPDF(options)`.
+
 ### `<webview>.capturePage([rect, ]callback)`
 
-* `rect` [Rectangle](structures/rectangle.md) (optional) - The area of the page to be captured.
+* `rect` [Rectangle](structures/rectangle.md) (optional) - The bounds to capture
 * `callback` Function
   * `image` [NativeImage](native-image.md)
 
-Captures a snapshot of the `webview`'s page. Same as `webContents.capturePage([rect, ]callback)`.
+Captures a snapshot of the page within `rect`. Upon completion `callback` will
+be called with `callback(image)`. The `image` is an instance of [NativeImage](native-image.md)
+that stores data of the snapshot. Omitting `rect` will capture the whole visible page.
+
+**[Deprecated Soon](modernization/promisification.md)**
+
+### `<webview>.capturePage([rect])`
+
+* `rect` [Rectangle](structures/rectangle.md) (optional) - The area of the page to be captured.
+
+Returns `Promise<NativeImage>` - Resolves with a [NativeImage](native-image.md)
+
+Captures a snapshot of the page within `rect`. Omitting `rect` will capture the whole visible page.
 
 ### `<webview>.send(channel[, arg1][, arg2][, ...])`
 
@@ -583,21 +641,13 @@ increment above or below represents zooming 20% larger or smaller to default
 limits of 300% and 50% of original size, respectively. The formula for this is
 `scale := 1.2 ^ level`.
 
-### `<webview>.getZoomFactor(callback)`
+### `<webview>.getZoomFactor()`
 
-* `callback` Function
-  * `zoomFactor` Number
+Returns `Number` - the current zoom factor.
 
-Sends a request to get current zoom factor, the `callback` will be called with
-`callback(zoomFactor)`.
+### `<webview>.getZoomLevel()`
 
-### `<webview>.getZoomLevel(callback)`
-
-* `callback` Function
-  * `zoomLevel` Number
-
-Sends a request to get current zoom level, the `callback` will be called with
-`callback(zoomLevel)`.
+Returns `Number` - the current zoom level.
 
 ### `<webview>.setVisualZoomLevelLimits(minimumLevel, maximumLevel)`
 
@@ -624,6 +674,10 @@ this `webview`.
 
 It depends on the [`remote`](remote.md) module,
 it is therefore not available when this module is disabled.
+
+### `<webview>.getWebContentsId()`
+
+Returns `Number` - The WebContents ID of this `webview`.
 
 ## DOM events
 
@@ -770,7 +824,7 @@ const webview = document.querySelector('webview')
 webview.addEventListener('new-window', (e) => {
   const protocol = require('url').parse(e.url).protocol
   if (protocol === 'http:' || protocol === 'https:') {
-    shell.openExternal(e.url)
+    shell.openExternalSync(e.url)
   }
 })
 ```
@@ -865,10 +919,6 @@ ipcRenderer.on('ping', () => {
 ### Event: 'crashed'
 
 Fired when the renderer process is crashed.
-
-### Event: 'gpu-crashed'
-
-Fired when the gpu process is crashed.
 
 ### Event: 'plugin-crashed'
 

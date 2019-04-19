@@ -15,6 +15,7 @@
 #include "atom/renderer/atom_render_frame_observer.h"
 #include "atom/renderer/atom_render_view_observer.h"
 #include "atom/renderer/content_settings_observer.h"
+#include "atom/renderer/electron_api_service_impl.h"
 #include "atom/renderer/preferences_manager.h"
 #include "base/command_line.h"
 #include "base/strings/string_split.h"
@@ -26,13 +27,15 @@
 #include "electron/buildflags/buildflags.h"
 #include "native_mate/dictionary.h"
 #include "printing/buildflags/buildflags.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_custom_element.h"  // NOLINT(build/include_alpha)
 #include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_plugin_params.h"
 #include "third_party/blink/public/web/web_script_source.h"
 #include "third_party/blink/public/web/web_security_policy.h"
-#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
+#include "third_party/blink/public/web/web_view.h"
+#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"  // nogncheck
 
 #if defined(OS_MACOSX)
 #include "base/strings/sys_string_conversions.h"
@@ -57,6 +60,7 @@
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "atom/renderer/printing/print_render_frame_helper_delegate.h"
 #include "components/printing/renderer/print_render_frame_helper.h"
+#include "printing/print_settings.h"
 #endif  // BUILDFLAG(ENABLE_PRINTING)
 
 namespace atom {
@@ -153,7 +157,6 @@ void RendererClientBase::RenderThreadStarted() {
   // In Chrome we should set extension's origins to match the pages they can
   // work on, but in Electron currently we just let extensions do anything.
   blink::SchemeRegistry::RegisterURLSchemeAsSecure(extension_scheme);
-  blink::SchemeRegistry::RegisterURLSchemeAsCORSEnabled(extension_scheme);
   blink::SchemeRegistry::RegisterURLSchemeAsBypassingContentSecurityPolicy(
       extension_scheme);
 
@@ -162,6 +165,25 @@ void RendererClientBase::RenderThreadStarted() {
       ParseSchemesCLISwitch(command_line, switches::kSecureSchemes);
   for (const std::string& scheme : secure_schemes_list)
     blink::SchemeRegistry::RegisterURLSchemeAsSecure(
+        WTF::String::FromUTF8(scheme.data(), scheme.length()));
+
+  std::vector<std::string> fetch_enabled_schemes =
+      ParseSchemesCLISwitch(command_line, switches::kFetchSchemes);
+  for (const std::string& scheme : fetch_enabled_schemes) {
+    blink::WebSecurityPolicy::RegisterURLSchemeAsSupportingFetchAPI(
+        blink::WebString::FromASCII(scheme));
+  }
+
+  std::vector<std::string> service_worker_schemes =
+      ParseSchemesCLISwitch(command_line, switches::kServiceWorkerSchemes);
+  for (const std::string& scheme : service_worker_schemes)
+    blink::WebSecurityPolicy::RegisterURLSchemeAsAllowingServiceWorkers(
+        blink::WebString::FromASCII(scheme));
+
+  std::vector<std::string> csp_bypassing_schemes =
+      ParseSchemesCLISwitch(command_line, switches::kBypassCSPSchemes);
+  for (const std::string& scheme : csp_bypassing_schemes)
+    blink::SchemeRegistry::RegisterURLSchemeAsBypassingContentSecurityPolicy(
         WTF::String::FromUTF8(scheme.data(), scheme.length()));
 
   // Allow file scheme to handle service worker by default.
@@ -195,6 +217,18 @@ void RendererClientBase::RenderFrameCreated(
       render_frame, std::make_unique<atom::PrintRenderFrameHelperDelegate>());
 #endif
 
+  // TODO(nornagon): it might be possible for an IPC message sent to this
+  // service to trigger v8 context creation before the page has begun loading.
+  // However, it's unclear whether such a timing is possible to trigger, and we
+  // don't have any test to confirm it. Add a test that confirms that a
+  // main->renderer IPC can't cause the preload script to be executed twice. If
+  // it is possible to trigger the preload script before the document is ready
+  // through this interface, we should delay adding it to the registry until
+  // the document is ready.
+  render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
+      base::BindRepeating(&ElectronApiServiceImpl::CreateMojoService,
+                          render_frame, this));
+
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
   // Allow access to file scheme from pdf viewer.
   blink::WebSecurityPolicy::AddOriginAccessWhitelistEntry(
@@ -203,16 +237,16 @@ void RendererClientBase::RenderFrameCreated(
 
   content::RenderView* render_view = render_frame->GetRenderView();
   if (render_frame->IsMainFrame() && render_view) {
-    blink::WebFrameWidget* web_frame_widget = render_view->GetWebFrameWidget();
-    if (web_frame_widget) {
+    blink::WebView* webview = render_view->GetWebView();
+    if (webview) {
       base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
       if (cmd->HasSwitch(switches::kGuestInstanceID)) {  // webview.
-        web_frame_widget->SetBaseBackgroundColor(SK_ColorTRANSPARENT);
+        webview->SetBaseBackgroundColor(SK_ColorTRANSPARENT);
       } else {  // normal window.
         std::string name = cmd->GetSwitchValueASCII(switches::kBackgroundColor);
         SkColor color =
             name.empty() ? SK_ColorTRANSPARENT : ParseHexColor(name);
-        web_frame_widget->SetBaseBackgroundColor(color);
+        webview->SetBaseBackgroundColor(color);
       }
     }
   }
@@ -269,6 +303,12 @@ bool RendererClientBase::IsKeySystemsUpdateNeeded() {
 #endif
 }
 
+void RendererClientBase::DidSetUserAgent(const std::string& user_agent) {
+#if BUILDFLAG(ENABLE_PRINTING)
+  printing::SetAgent(user_agent);
+#endif
+}
+
 v8::Local<v8::Context> RendererClientBase::GetContext(
     blink::WebLocalFrame* frame,
     v8::Isolate* isolate) const {
@@ -276,6 +316,16 @@ v8::Local<v8::Context> RendererClientBase::GetContext(
     return frame->WorldScriptContext(isolate, World::ISOLATED_WORLD);
   else
     return frame->MainWorldScriptContext();
+}
+
+v8::Local<v8::Value> RendererClientBase::RunScript(
+    v8::Local<v8::Context> context,
+    v8::Local<v8::String> source) {
+  auto maybe_script = v8::Script::Compile(context, source);
+  v8::Local<v8::Script> script;
+  if (!maybe_script.ToLocal(&script))
+    return v8::Local<v8::Value>();
+  return script->Run(context).ToLocalChecked();
 }
 
 }  // namespace atom
