@@ -155,9 +155,9 @@ class Browser : public WindowListObserver {
                                const base::DictionaryValue& user_info);
 
   // Bounce the dock icon.
-  enum BounceType {
-    BOUNCE_CRITICAL = 0,
-    BOUNCE_INFORMATIONAL = 10,
+  enum class BounceType {
+    CRITICAL = 0,        // NSCriticalRequest
+    INFORMATIONAL = 10,  // NSInformationalRequest
   };
   int DockBounce(BounceType type);
   void DockCancelBounce(int request_id);
@@ -197,6 +197,7 @@ class Browser : public WindowListObserver {
     base::string16 arguments;
     base::string16 title;
     base::string16 description;
+    base::FilePath working_dir;
     base::FilePath icon_path;
     int icon_index;
 

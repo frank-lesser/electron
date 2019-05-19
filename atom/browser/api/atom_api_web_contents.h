@@ -80,7 +80,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
                     public content::WebContentsObserver,
                     public mojom::ElectronBrowser {
  public:
-  enum Type {
+  enum class Type {
     BACKGROUND_PAGE,  // A DevTools extension background page.
     BROWSER_WINDOW,   // Used by BrowserWindow.
     BROWSER_VIEW,     // Used by BrowserView.
@@ -294,8 +294,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
   // the specified URL.
   void GrantOriginAccess(const GURL& url);
 
-  void TakeHeapSnapshot(const base::FilePath& file_path,
-                        base::Callback<void(bool)>);
+  v8::Local<v8::Promise> TakeHeapSnapshot(const base::FilePath& file_path);
 
   // Properties.
   int32_t ID() const;
@@ -337,7 +336,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
 
   // content::WebContentsDelegate:
   bool DidAddMessageToConsole(content::WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
@@ -370,6 +369,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
+  void ContentsZoomChange(bool zoom_in) override;
   void EnterFullscreenModeForTab(
       content::WebContents* source,
       const GURL& origin,
@@ -445,12 +445,12 @@ class WebContents : public mate::TrackableObject<WebContents>,
   void PluginCrashed(const base::FilePath& plugin_path,
                      base::ProcessId plugin_pid) override;
   void MediaStartedPlaying(const MediaPlayerInfo& video_type,
-                           const MediaPlayerId& id) override;
+                           const content::MediaPlayerId& id) override;
   void MediaStoppedPlaying(
       const MediaPlayerInfo& video_type,
-      const MediaPlayerId& id,
+      const content::MediaPlayerId& id,
       content::WebContentsObserver::MediaStoppedReason reason) override;
-  void DidChangeThemeColor(SkColor theme_color) override;
+  void DidChangeThemeColor(base::Optional<SkColor> theme_color) override;
   void OnInterfaceRequestFromFrame(
       content::RenderFrameHost* render_frame_host,
       const std::string& interface_name,
@@ -535,7 +535,7 @@ class WebContents : public mate::TrackableObject<WebContents>,
   WebContentsZoomController* zoom_controller_ = nullptr;
 
   // The type of current WebContents.
-  Type type_ = BROWSER_WINDOW;
+  Type type_ = Type::BROWSER_WINDOW;
 
   // Request id used for findInPage request.
   uint32_t request_id_ = 0;

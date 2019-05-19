@@ -19,23 +19,12 @@ Object.setPrototypeOf(App.prototype, EventEmitter.prototype)
 EventEmitter.call(app as any)
 
 Object.assign(app, {
-  // TODO(codebytere): remove in 7.0
-  setApplicationMenu (menu: Electron.Menu | null) {
-    return Menu.setApplicationMenu(menu)
-  },
-  // TODO(codebytere): remove in 7.0
-  getApplicationMenu () {
-    return Menu.getApplicationMenu()
-  },
   commandLine: {
     hasSwitch: (theSwitch: string) => commandLine.hasSwitch(String(theSwitch)),
     getSwitchValue: (theSwitch: string) => commandLine.getSwitchValue(String(theSwitch)),
     appendSwitch: (theSwitch: string, value?: string) => commandLine.appendSwitch(String(theSwitch), typeof value === 'undefined' ? value : String(value)),
     appendArgument: (arg: string) => commandLine.appendArgument(String(arg))
-  } as Electron.CommandLine,
-  enableMixedSandbox () {
-    deprecate.log(`'enableMixedSandbox' is deprecated. Mixed-sandbox mode is now enabled by default. You can safely remove the call to enableMixedSandbox().`)
-  }
+  } as Electron.CommandLine
 })
 
 // we define this here because it'd be overly complicated to
@@ -59,8 +48,8 @@ app.isPackaged = (() => {
 
 app._setDefaultAppPaths = (packagePath) => {
   // Set the user path according to application's name.
-  app.setPath('userData', path.join(app.getPath('appData'), app.getName()))
-  app.setPath('userCache', path.join(app.getPath('cache'), app.getName()))
+  app.setPath('userData', path.join(app.getPath('appData'), app.name!))
+  app.setPath('userCache', path.join(app.getPath('cache'), app.name!))
   app.setAppPath(packagePath)
 
   // Add support for --user-data-dir=
@@ -73,12 +62,12 @@ app._setDefaultAppPaths = (packagePath) => {
 }
 
 if (process.platform === 'darwin') {
-  const setDockMenu = app.dock.setMenu
-  app.dock.setMenu = (menu) => {
+  const setDockMenu = app.dock!.setMenu
+  app.dock!.setMenu = (menu) => {
     dockMenu = menu
     setDockMenu(menu)
   }
-  app.dock.getMenu = () => dockMenu
+  app.dock!.getMenu = () => dockMenu
 }
 
 // Routes the events to webContents.
@@ -89,11 +78,10 @@ for (const name of events) {
   })
 }
 
-// Function Deprecations
-app.getFileIcon = deprecate.promisify(app.getFileIcon)
-
 // Property Deprecations
 deprecate.fnToProperty(app, 'accessibilitySupportEnabled', '_isAccessibilitySupportEnabled', '_setAccessibilitySupportEnabled')
+deprecate.fnToProperty(app, 'badgeCount', '_getBadgeCount', '_setBadgeCount')
+deprecate.fnToProperty(app, 'name', '_getName', '_setName')
 
 // Wrappers for native classes.
 const { DownloadItem } = process.electronBinding('download_item')

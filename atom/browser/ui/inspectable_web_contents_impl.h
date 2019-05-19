@@ -143,6 +143,9 @@ class InspectableWebContentsImpl
                                  int boundary_value) override {}
   void ReadyForTest() override {}
   void SetOpenNewWindowForPopups(bool value) override {}
+  void RecordPerformanceHistogram(const std::string& name,
+                                  double duration) override {}
+  void RecordUserMetricsAction(const std::string& name) override {}
 
   // content::DevToolsFrontendHostDelegate:
   void HandleMessageFromDevToolsFrontend(const std::string& message);
@@ -165,7 +168,7 @@ class InspectableWebContentsImpl
 
   // content::WebContentsDelegate:
   bool DidAddMessageToConsole(content::WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;

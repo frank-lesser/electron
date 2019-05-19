@@ -184,18 +184,16 @@ describe('webContents module', () => {
   })
 
   describe('setDevToolsWebContents() API', () => {
-    it('sets arbitry webContents as devtools', (done) => {
+    it('sets arbitrary webContents as devtools', async () => {
       const devtools = new BrowserWindow({ show: false })
-      devtools.webContents.once('dom-ready', () => {
-        assert.ok(devtools.getURL().startsWith('chrome-devtools://devtools'))
-        devtools.webContents.executeJavaScript('InspectorFrontendHost.constructor.name', (name) => {
-          assert.ok(name, 'InspectorFrontendHostImpl')
-          devtools.destroy()
-          done()
-        })
-      })
+      const promise = emittedOnce(devtools.webContents, 'dom-ready')
       w.webContents.setDevToolsWebContents(devtools.webContents)
       w.webContents.openDevTools()
+      await promise
+      expect(devtools.getURL().startsWith('chrome-devtools://devtools')).to.be.true()
+      const result = await devtools.webContents.executeJavaScript('InspectorFrontendHost.constructor.name')
+      expect(result).to.equal('InspectorFrontendHostImpl')
+      devtools.destroy()
     })
   })
 
@@ -347,6 +345,45 @@ describe('webContents module', () => {
     })
   })
 
+  describe('zoom-changed', () => {
+    beforeEach(function () {
+      // On Mac, zooming isn't done with the mouse wheel.
+      if (process.platform === 'darwin') {
+        return closeWindow(w).then(() => {
+          w = null
+          this.skip()
+        })
+      }
+    })
+
+    it('is emitted with the correct zooming info', async () => {
+      w.loadFile(path.join(fixtures, 'pages', 'base-page.html'))
+      await emittedOnce(w.webContents, 'did-finish-load')
+
+      const testZoomChanged = async ({ zoomingIn }) => {
+        const promise = emittedOnce(w.webContents, 'zoom-changed')
+
+        w.webContents.sendInputEvent({
+          type: 'mousewheel',
+          x: 300,
+          y: 300,
+          deltaX: 0,
+          deltaY: zoomingIn ? 1 : -1,
+          wheelTicksX: 0,
+          wheelTicksY: zoomingIn ? 1 : -1,
+          phase: 'began',
+          modifiers: ['control', 'meta']
+        })
+
+        const [, zoomDirection] = await promise
+        expect(zoomDirection).to.equal(zoomingIn ? 'in' : 'out')
+      }
+
+      await testZoomChanged({ zoomingIn: true })
+      await testZoomChanged({ zoomingIn: false })
+    })
+  })
+
   describe('devtools window', () => {
     let testFn = it
     if (process.platform === 'darwin' && isCi) {
@@ -478,20 +515,16 @@ describe('webContents module', () => {
     })
   })
 
-  it('supports inserting CSS', (done) => {
+  it('supports inserting CSS', async () => {
     w.loadURL('about:blank')
     w.webContents.insertCSS('body { background-repeat: round; }')
-    w.webContents.executeJavaScript('window.getComputedStyle(document.body).getPropertyValue("background-repeat")', (result) => {
-      assert.strictEqual(result, 'round')
-      done()
-    })
+    const result = await w.webContents.executeJavaScript('window.getComputedStyle(document.body).getPropertyValue("background-repeat")')
+    expect(result).to.equal('round')
   })
 
   it('supports inspecting an element in the devtools', (done) => {
     w.loadURL('about:blank')
-    w.webContents.once('devtools-opened', () => {
-      done()
-    })
+    w.webContents.once('devtools-opened', () => { done() })
     w.webContents.inspectElement(10, 10)
   })
 
@@ -572,20 +605,6 @@ describe('webContents module', () => {
         expect(zoomLevel).to.eql(0.0)
         w.webContents.setZoomLevel(0.5)
         const newZoomLevel = w.webContents.getZoomLevel()
-        expect(newZoomLevel).to.eql(0.5)
-      } finally {
-        w.webContents.setZoomLevel(0)
-      }
-    })
-
-    // TODO(codebytere): remove when promisification is complete
-    it('can set the correct zoom level (callback)', async () => {
-      try {
-        await w.loadURL('about:blank')
-        const zoomLevel = await new Promise(resolve => w.webContents.getZoomLevel(resolve))
-        expect(zoomLevel).to.eql(0.0)
-        w.webContents.setZoomLevel(0.5)
-        const newZoomLevel = await new Promise(resolve => w.webContents.getZoomLevel(resolve))
         expect(newZoomLevel).to.eql(0.5)
       } finally {
         w.webContents.setZoomLevel(0)
@@ -732,7 +751,7 @@ describe('webContents module', () => {
       `
       w.webContents.on('did-finish-load', () => {
         if (initialNavigation) {
-          w.webContents.executeJavaScript(source, () => {})
+          w.webContents.executeJavaScript(source)
         } else {
           const zoomLevel = w.webContents.getZoomLevel()
           assert.strictEqual(zoomLevel, 0)
@@ -1066,24 +1085,6 @@ describe('webContents module', () => {
       const result = await w.webContents.executeJavaScript('37 + 5')
       assert.strictEqual(result, 42)
     })
-
-    // TODO(miniak): remove when promisification is complete
-    it('responds to executeJavaScript (callback)', (done) => {
-      w.destroy()
-      w = new BrowserWindow({
-        show: false,
-        webPreferences: {
-          sandbox: true
-        }
-      })
-      w.webContents.once('did-finish-load', () => {
-        w.webContents.executeJavaScript('37 + 5', (result) => {
-          assert.strictEqual(result, 42)
-          done()
-        })
-      })
-      w.loadURL('about:blank')
-    })
   })
 
   describe('preload-error event', () => {
@@ -1305,26 +1306,6 @@ describe('webContents module', () => {
       const data = await w.webContents.printToPDF({})
       assert.strictEqual(data instanceof Buffer, true)
       assert.notStrictEqual(data.length, 0)
-    })
-
-    // TODO(miniak): remove when promisification is complete
-    it('can print to PDF (callback)', (done) => {
-      w.destroy()
-      w = new BrowserWindow({
-        show: false,
-        webPreferences: {
-          sandbox: true
-        }
-      })
-      w.webContents.once('did-finish-load', () => {
-        w.webContents.printToPDF({}, function (error, data) {
-          assert.strictEqual(error, null)
-          assert.strictEqual(data instanceof Buffer, true)
-          assert.notStrictEqual(data.length, 0)
-          done()
-        })
-      })
-      w.loadURL('data:text/html,%3Ch1%3EHello%2C%20World!%3C%2Fh1%3E')
     })
   })
 })

@@ -14,10 +14,12 @@
 #include "atom/app/manifests.h"
 #include "atom/browser/api/atom_api_app.h"
 #include "atom/browser/api/atom_api_protocol.h"
+#include "atom/browser/api/atom_api_protocol_ns.h"
 #include "atom/browser/api/atom_api_web_contents.h"
 #include "atom/browser/atom_browser_context.h"
 #include "atom/browser/atom_browser_main_parts.h"
 #include "atom/browser/atom_navigation_throttle.h"
+#include "atom/browser/atom_paths.h"
 #include "atom/browser/atom_quota_permission_context.h"
 #include "atom/browser/atom_resource_dispatcher_host_delegate.h"
 #include "atom/browser/atom_speech_recognition_manager_delegate.h"
@@ -534,7 +536,7 @@ std::string AtomBrowserClient::GetGeolocationApiKey() {
   return api_key;
 }
 
-content::QuotaPermissionContext*
+scoped_refptr<content::QuotaPermissionContext>
 AtomBrowserClient::CreateQuotaPermissionContext() {
   return new AtomQuotaPermissionContext;
 }
@@ -746,7 +748,7 @@ content::BrowserMainParts* AtomBrowserClient::CreateBrowserMainParts(
 
 void AtomBrowserClient::WebNotificationAllowed(
     int render_process_id,
-    const base::Callback<void(bool, bool)>& callback) {
+    const base::RepeatingCallback<void(bool, bool)>& callback) {
   content::WebContents* web_contents =
       WebContentsPreferences::GetWebContentsFromProcessID(render_process_id);
   if (!web_contents) {
@@ -792,14 +794,10 @@ void AtomBrowserClient::RenderProcessExited(
 }
 
 void OnOpenExternal(const GURL& escaped_url, bool allowed) {
-  if (allowed)
+  if (allowed) {
     platform_util::OpenExternal(
-#if defined(OS_WIN)
-        base::UTF8ToUTF16(escaped_url.spec()),
-#else
-        escaped_url,
-#endif
-        platform_util::OpenExternalOptions());
+        escaped_url, platform_util::OpenExternalOptions(), base::DoNothing());
+  }
 }
 
 void HandleExternalProtocolInUI(
@@ -867,7 +865,8 @@ NotificationPresenter* AtomBrowserClient::GetNotificationPresenter() {
 }
 
 content::PlatformNotificationService*
-AtomBrowserClient::GetPlatformNotificationService() {
+AtomBrowserClient::GetPlatformNotificationService(
+    content::BrowserContext* browser_context) {
   if (!notification_service_) {
     notification_service_.reset(new PlatformNotificationService(this));
   }
@@ -900,6 +899,15 @@ void AtomBrowserClient::OnNetworkServiceCreated(
       network_service);
 }
 
+std::vector<base::FilePath>
+AtomBrowserClient::GetNetworkContextsParentDirectory() {
+  base::FilePath user_data_dir;
+  base::PathService::Get(DIR_USER_DATA, &user_data_dir);
+  DCHECK(!user_data_dir.empty());
+
+  return {user_data_dir};
+}
+
 bool AtomBrowserClient::ShouldBypassCORB(int render_process_id) const {
   // This is called on the network thread.
   base::AutoLock auto_lock(process_preferences_lock_);
@@ -912,7 +920,42 @@ std::string AtomBrowserClient::GetProduct() const {
 }
 
 std::string AtomBrowserClient::GetUserAgent() const {
-  return GetApplicationUserAgent();
+  if (user_agent_override_.empty())
+    return GetApplicationUserAgent();
+  return user_agent_override_;
+}
+
+void AtomBrowserClient::SetUserAgent(const std::string& user_agent) {
+  user_agent_override_ = user_agent;
+}
+
+void AtomBrowserClient::RegisterNonNetworkNavigationURLLoaderFactories(
+    int frame_tree_node_id,
+    NonNetworkURLLoaderFactoryMap* factories) {
+  content::WebContents* web_contents =
+      content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
+  api::ProtocolNS* protocol = api::ProtocolNS::FromWrappedClass(
+      v8::Isolate::GetCurrent(), web_contents->GetBrowserContext());
+  if (protocol)
+    protocol->RegisterURLLoaderFactories(factories);
+}
+
+void AtomBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories(
+    int render_process_id,
+    int render_frame_id,
+    NonNetworkURLLoaderFactoryMap* factories) {
+  // Chromium may call this even when NetworkService is not enabled.
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
+  content::RenderFrameHost* frame_host =
+      content::RenderFrameHost::FromID(render_process_id, render_frame_id);
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(frame_host);
+  api::ProtocolNS* protocol = api::ProtocolNS::FromWrappedClass(
+      v8::Isolate::GetCurrent(), web_contents->GetBrowserContext());
+  if (protocol)
+    protocol->RegisterURLLoaderFactories(factories);
 }
 
 std::string AtomBrowserClient::GetApplicationLocale() {

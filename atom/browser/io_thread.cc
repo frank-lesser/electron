@@ -45,7 +45,7 @@ void IOThread::Init() {
 
     auto cert_verifier = std::make_unique<net::CachingCertVerifier>(
         std::make_unique<net::MultiThreadedCertVerifier>(
-            net::CertVerifyProc::CreateDefault()));
+            net::CertVerifyProc::CreateDefault(nullptr)));
     builder->SetCertVerifier(std::move(cert_verifier));
 
     // Create the network service, so that shared host resolver
@@ -70,5 +70,5 @@ void IOThread::CleanUp() {
     system_request_context_->proxy_resolution_service()->OnShutdown();
 
   if (net_log_)
-    net_log_->ShutDownBeforeTaskScheduler();
+    net_log_->ShutDownBeforeThreadPool();
 }

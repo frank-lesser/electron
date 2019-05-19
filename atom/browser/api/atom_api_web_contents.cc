@@ -35,14 +35,15 @@
 #include "atom/common/color_util.h"
 #include "atom/common/mouse_util.h"
 #include "atom/common/native_mate_converters/blink_converter.h"
-#include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/content_converter.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
 #include "atom/common/native_mate_converters/gurl_converter.h"
 #include "atom/common/native_mate_converters/image_converter.h"
+#include "atom/common/native_mate_converters/map_converter.h"
 #include "atom/common/native_mate_converters/net_converter.h"
 #include "atom/common/native_mate_converters/network_converter.h"
+#include "atom/common/native_mate_converters/once_callback.h"
 #include "atom/common/native_mate_converters/string16_converter.h"
 #include "atom/common/native_mate_converters/value_converter.h"
 #include "atom/common/node_includes.h"
@@ -86,6 +87,7 @@
 #include "net/url_request/url_request_context.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/mojom/frame/find_in_page.mojom.h"
+#include "third_party/blink/public/platform/web_cursor_info.h"
 #include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/display/screen.h"
 #include "ui/events/base_event_utils.h"
@@ -266,7 +268,7 @@ struct WebContents::FrameDispatchHelper {
 
 WebContents::WebContents(v8::Isolate* isolate,
                          content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents), type_(REMOTE) {
+    : content::WebContentsObserver(web_contents), type_(Type::REMOTE) {
   web_contents->SetUserAgentOverride(GetBrowserContext()->GetUserAgent(),
                                      false);
   Init(isolate);
@@ -282,7 +284,8 @@ WebContents::WebContents(v8::Isolate* isolate,
                          std::unique_ptr<content::WebContents> web_contents,
                          Type type)
     : content::WebContentsObserver(web_contents.get()), type_(type) {
-  DCHECK(type != REMOTE) << "Can't take ownership of a remote WebContents";
+  DCHECK(type != Type::REMOTE)
+      << "Can't take ownership of a remote WebContents";
   auto session = Session::CreateFrom(isolate, GetBrowserContext());
   session_.Reset(isolate, session.ToV8());
   InitWithSessionAndOptions(isolate, std::move(web_contents), session,
@@ -301,14 +304,14 @@ WebContents::WebContents(v8::Isolate* isolate,
   // Remvoe this after we upgraded to use VS 2015 Update 3.
   bool b = false;
   if (options.Get("isGuest", &b) && b)
-    type_ = WEB_VIEW;
+    type_ = Type::WEB_VIEW;
   else if (options.Get("isBackgroundPage", &b) && b)
-    type_ = BACKGROUND_PAGE;
+    type_ = Type::BACKGROUND_PAGE;
   else if (options.Get("isBrowserView", &b) && b)
-    type_ = BROWSER_VIEW;
+    type_ = Type::BROWSER_VIEW;
 #if BUILDFLAG(ENABLE_OSR)
   else if (options.Get(options::kOffscreen, &b) && b)
-    type_ = OFF_SCREEN;
+    type_ = Type::OFF_SCREEN;
 #endif
 
   // Init embedder earlier
@@ -343,7 +346,8 @@ WebContents::WebContents(v8::Isolate* isolate,
 #if BUILDFLAG(ENABLE_OSR)
     if (embedder_ && embedder_->IsOffScreen()) {
       auto* view = new OffScreenWebContentsView(
-          false, base::Bind(&WebContents::OnPaint, base::Unretained(this)));
+          false,
+          base::BindRepeating(&WebContents::OnPaint, base::Unretained(this)));
       params.view = view;
       params.delegate_view = view;
 
@@ -360,7 +364,8 @@ WebContents::WebContents(v8::Isolate* isolate,
 
     content::WebContents::CreateParams params(session->browser_context());
     auto* view = new OffScreenWebContentsView(
-        transparent, base::Bind(&WebContents::OnPaint, base::Unretained(this)));
+        transparent,
+        base::BindRepeating(&WebContents::OnPaint, base::Unretained(this)));
     params.view = view;
     params.delegate_view = view;
 
@@ -455,12 +460,12 @@ WebContents::~WebContents() {
 
     RenderViewDeleted(web_contents()->GetRenderViewHost());
 
-    if (type_ == WEB_VIEW) {
+    if (type_ == Type::WEB_VIEW) {
       DCHECK(!web_contents()->GetOuterWebContents())
           << "Should never manually destroy an attached webview";
       // For webview simply destroy the WebContents immediately.
       DestroyWebContents(false /* async */);
-    } else if (type_ == BROWSER_WINDOW && owner_window()) {
+    } else if (type_ == Type::BROWSER_WINDOW && owner_window()) {
       // For BrowserWindow we should close the window and clean up everything
       // before WebContents is destroyed.
       for (ExtendedWebContentsObserver& observer : observers_)
@@ -490,12 +495,14 @@ void WebContents::DestroyWebContents(bool async) {
   ResetManagedWebContents(async);
 }
 
-bool WebContents::DidAddMessageToConsole(content::WebContents* source,
-                                         int32_t level,
-                                         const base::string16& message,
-                                         int32_t line_no,
-                                         const base::string16& source_id) {
-  return Emit("console-message", level, message, line_no, source_id);
+bool WebContents::DidAddMessageToConsole(
+    content::WebContents* source,
+    blink::mojom::ConsoleMessageLevel level,
+    const base::string16& message,
+    int32_t line_no,
+    const base::string16& source_id) {
+  return Emit("console-message", static_cast<int32_t>(level), message, line_no,
+              source_id);
 }
 
 void WebContents::OnCreateWindow(
@@ -505,7 +512,7 @@ void WebContents::OnCreateWindow(
     WindowOpenDisposition disposition,
     const std::vector<std::string>& features,
     const scoped_refptr<network::ResourceRequestBody>& body) {
-  if (type_ == BROWSER_WINDOW || type_ == OFF_SCREEN)
+  if (type_ == Type::BROWSER_WINDOW || type_ == Type::OFF_SCREEN)
     Emit("-new-window", target_url, frame_name, disposition, features, body,
          referrer);
   else
@@ -537,7 +544,7 @@ void WebContents::AddNewContents(
   v8::Locker locker(isolate());
   v8::HandleScope handle_scope(isolate());
   auto api_web_contents =
-      CreateAndTake(isolate(), std::move(new_contents), BROWSER_WINDOW);
+      CreateAndTake(isolate(), std::move(new_contents), Type::BROWSER_WINDOW);
   if (Emit("-add-new-contents", api_web_contents, disposition, user_gesture,
            initial_rect.x(), initial_rect.y(), initial_rect.width(),
            initial_rect.height(), tracker->url, tracker->frame_name)) {
@@ -550,7 +557,7 @@ content::WebContents* WebContents::OpenURLFromTab(
     content::WebContents* source,
     const content::OpenURLParams& params) {
   if (params.disposition != WindowOpenDisposition::CURRENT_TAB) {
-    if (type_ == BROWSER_WINDOW || type_ == OFF_SCREEN)
+    if (type_ == Type::BROWSER_WINDOW || type_ == Type::OFF_SCREEN)
       Emit("-new-window", params.url, "", params.disposition);
     else
       Emit("new-window", params.url, "", params.disposition);
@@ -572,7 +579,7 @@ content::WebContents* WebContents::OpenURLFromTab(
 void WebContents::BeforeUnloadFired(content::WebContents* tab,
                                     bool proceed,
                                     bool* proceed_to_fire_unload) {
-  if (type_ == BROWSER_WINDOW || type_ == OFF_SCREEN)
+  if (type_ == Type::BROWSER_WINDOW || type_ == Type::OFF_SCREEN)
     *proceed_to_fire_unload = proceed;
   else
     *proceed_to_fire_unload = true;
@@ -606,7 +613,7 @@ void WebContents::UpdateTargetURL(content::WebContents* source,
 bool WebContents::HandleKeyboardEvent(
     content::WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
-  if (type_ == WEB_VIEW && embedder_) {
+  if (type_ == Type::WEB_VIEW && embedder_) {
     // Send the unhandled keyboard events back to the embedder.
     return embedder_->HandleKeyboardEvent(source, event);
   } else {
@@ -629,14 +636,19 @@ content::KeyboardEventProcessingResult WebContents::PreHandleKeyboardEvent(
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
+void WebContents::ContentsZoomChange(bool zoom_in) {
+  Emit("zoom-changed", zoom_in ? "in" : "out");
+}
+
 void WebContents::EnterFullscreenModeForTab(
     content::WebContents* source,
     const GURL& origin,
     const blink::WebFullscreenOptions& options) {
   auto* permission_helper =
       WebContentsPermissionHelper::FromWebContents(source);
-  auto callback = base::Bind(&WebContents::OnEnterFullscreenModeForTab,
-                             base::Unretained(this), source, origin, options);
+  auto callback =
+      base::BindRepeating(&WebContents::OnEnterFullscreenModeForTab,
+                          base::Unretained(this), source, origin, options);
   permission_helper->RequestFullscreenPermission(callback);
 }
 
@@ -675,8 +687,9 @@ bool WebContents::HandleContextMenu(content::RenderFrameHost* render_frame_host,
                                     const content::ContextMenuParams& params) {
   if (params.custom_context.is_pepper_menu) {
     Emit("pepper-context-menu", std::make_pair(params, web_contents()),
-         base::Bind(&content::WebContents::NotifyContextMenuClosed,
-                    base::Unretained(web_contents()), params.custom_context));
+         base::BindOnce(&content::WebContents::NotifyContextMenuClosed,
+                        base::Unretained(web_contents()),
+                        params.custom_context));
   } else {
     Emit("context-menu", std::make_pair(params, web_contents()));
   }
@@ -807,20 +820,20 @@ void WebContents::PluginCrashed(const base::FilePath& plugin_path,
 }
 
 void WebContents::MediaStartedPlaying(const MediaPlayerInfo& video_type,
-                                      const MediaPlayerId& id) {
+                                      const content::MediaPlayerId& id) {
   Emit("media-started-playing");
 }
 
 void WebContents::MediaStoppedPlaying(
     const MediaPlayerInfo& video_type,
-    const MediaPlayerId& id,
+    const content::MediaPlayerId& id,
     content::WebContentsObserver::MediaStoppedReason reason) {
   Emit("media-paused");
 }
 
-void WebContents::DidChangeThemeColor(SkColor theme_color) {
-  if (theme_color != SK_ColorTRANSPARENT) {
-    Emit("did-change-theme-color", atom::ToRGBHex(theme_color));
+void WebContents::DidChangeThemeColor(base::Optional<SkColor> theme_color) {
+  if (theme_color) {
+    Emit("did-change-theme-color", atom::ToRGBHex(theme_color.value()));
   } else {
     Emit("did-change-theme-color", nullptr);
   }
@@ -1192,7 +1205,7 @@ void WebContents::SetBackgroundThrottling(bool allowed) {
     return;
   }
 
-  const auto* render_view_host = contents->GetRenderViewHost();
+  auto* render_view_host = contents->GetRenderViewHost();
   if (!render_view_host) {
     return;
   }
@@ -1386,14 +1399,14 @@ v8::Local<v8::Promise> WebContents::SavePage(
 }
 
 void WebContents::OpenDevTools(mate::Arguments* args) {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   if (!enable_devtools_)
     return;
 
   std::string state;
-  if (type_ == WEB_VIEW || !owner_window()) {
+  if (type_ == Type::WEB_VIEW || !owner_window()) {
     state = "detach";
   }
   bool activate = true;
@@ -1409,21 +1422,21 @@ void WebContents::OpenDevTools(mate::Arguments* args) {
 }
 
 void WebContents::CloseDevTools() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   managed_web_contents()->CloseDevTools();
 }
 
 bool WebContents::IsDevToolsOpened() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return false;
 
   return managed_web_contents()->IsDevToolsViewShowing();
 }
 
 bool WebContents::IsDevToolsFocused() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return false;
 
   return managed_web_contents()->GetView()->IsDevToolsViewFocused();
@@ -1431,7 +1444,7 @@ bool WebContents::IsDevToolsFocused() {
 
 void WebContents::EnableDeviceEmulation(
     const blink::WebDeviceEmulationParams& params) {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   auto* frame_host = web_contents()->GetMainFrame();
@@ -1446,7 +1459,7 @@ void WebContents::EnableDeviceEmulation(
 }
 
 void WebContents::DisableDeviceEmulation() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   auto* frame_host = web_contents()->GetMainFrame();
@@ -1468,7 +1481,7 @@ void WebContents::ToggleDevTools() {
 }
 
 void WebContents::InspectElement(int x, int y) {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   if (!enable_devtools_)
@@ -1480,7 +1493,7 @@ void WebContents::InspectElement(int x, int y) {
 }
 
 void WebContents::InspectSharedWorker() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   if (!enable_devtools_)
@@ -1497,7 +1510,7 @@ void WebContents::InspectSharedWorker() {
 }
 
 void WebContents::InspectServiceWorker() {
-  if (type_ == REMOTE)
+  if (type_ == Type::REMOTE)
     return;
 
   if (!enable_devtools_)
@@ -1697,7 +1710,7 @@ bool WebContents::IsFocused() const {
   if (!view)
     return false;
 
-  if (GetType() != BACKGROUND_PAGE) {
+  if (GetType() != Type::BACKGROUND_PAGE) {
     auto* window = web_contents()->GetNativeView()->GetToplevelWindow();
     if (window && !window->IsVisible())
       return false;
@@ -1915,10 +1928,9 @@ v8::Local<v8::Promise> WebContents::CapturePage(mate::Arguments* args) {
 }
 
 void WebContents::OnCursorChange(const content::WebCursor& cursor) {
-  content::CursorInfo info;
-  cursor.GetCursorInfo(&info);
+  const content::CursorInfo& info = cursor.info();
 
-  if (cursor.IsCustom()) {
+  if (info.type == blink::WebCursorInfo::kTypeCustom) {
     Emit("cursor-changed", CursorTypeToString(info),
          gfx::Image::CreateFrom1xBitmap(info.custom_image),
          info.image_scale_factor,
@@ -1930,7 +1942,7 @@ void WebContents::OnCursorChange(const content::WebCursor& cursor) {
 }
 
 bool WebContents::IsGuest() const {
-  return type_ == WEB_VIEW;
+  return type_ == Type::WEB_VIEW;
 }
 
 void WebContents::AttachToIframe(content::WebContents* embedder_web_contents,
@@ -1941,7 +1953,7 @@ void WebContents::AttachToIframe(content::WebContents* embedder_web_contents,
 
 bool WebContents::IsOffScreen() const {
 #if BUILDFLAG(ENABLE_OSR)
-  return type_ == OFF_SCREEN;
+  return type_ == Type::OFF_SCREEN;
 #else
   return false;
 #endif
@@ -2153,21 +2165,23 @@ void WebContents::GrantOriginAccess(const GURL& url) {
       url::Origin::Create(url));
 }
 
-void WebContents::TakeHeapSnapshot(const base::FilePath& file_path,
-                                   base::Callback<void(bool)> callback) {
-  base::ThreadRestrictions::ScopedAllowIO allow_io;
+v8::Local<v8::Promise> WebContents::TakeHeapSnapshot(
+    const base::FilePath& file_path) {
+  util::Promise promise(isolate());
+  v8::Local<v8::Promise> handle = promise.GetHandle();
 
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::File file(file_path,
                   base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
   if (!file.IsValid()) {
-    std::move(callback).Run(false);
-    return;
+    promise.RejectWithErrorMessage("takeHeapSnapshot failed");
+    return handle;
   }
 
   auto* frame_host = web_contents()->GetMainFrame();
   if (!frame_host) {
-    std::move(callback).Run(false);
-    return;
+    promise.RejectWithErrorMessage("takeHeapSnapshot failed");
+    return handle;
   }
 
   // This dance with `base::Owned` is to ensure that the interface stays alive
@@ -2179,10 +2193,17 @@ void WebContents::TakeHeapSnapshot(const base::FilePath& file_path,
   auto* raw_ptr = electron_ptr.get();
   (*raw_ptr)->TakeHeapSnapshot(
       mojo::WrapPlatformFile(file.TakePlatformFile()),
-      base::BindOnce([](mojom::ElectronRendererAssociatedPtr* ep,
-                        base::Callback<void(bool)> callback,
-                        bool success) { callback.Run(success); },
-                     base::Owned(std::move(electron_ptr)), callback));
+      base::BindOnce(
+          [](mojom::ElectronRendererAssociatedPtr* ep, util::Promise promise,
+             bool success) {
+            if (success) {
+              promise.Resolve();
+            } else {
+              promise.RejectWithErrorMessage("takeHeapSnapshot failed");
+            }
+          },
+          base::Owned(std::move(electron_ptr)), std::move(promise)));
+  return handle;
 }
 
 // static
@@ -2288,7 +2309,7 @@ void WebContents::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("getWebRTCIPHandlingPolicy",
                  &WebContents::GetWebRTCIPHandlingPolicy)
       .SetMethod("_grantOriginAccess", &WebContents::GrantOriginAccess)
-      .SetMethod("_takeHeapSnapshot", &WebContents::TakeHeapSnapshot)
+      .SetMethod("takeHeapSnapshot", &WebContents::TakeHeapSnapshot)
       .SetProperty("id", &WebContents::ID)
       .SetProperty("session", &WebContents::Session)
       .SetProperty("hostWebContents", &WebContents::HostWebContents)

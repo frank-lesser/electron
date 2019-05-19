@@ -139,6 +139,7 @@ void UnregisterNonABICompliantCodeRange(void* start) {
 
   RtlDeleteFunctionTable(&record->runtime_function);
 }
+
 #endif  // _WIN64
 
 }  // namespace
@@ -193,6 +194,7 @@ void CrashReporterWin::InitBreakpad(const std::string& product_name,
     v8::Isolate::GetCurrent()->GetCodeRange(&code_range, &size);
     if (code_range && size &&
         RegisterNonABICompliantCodeRange(code_range, size)) {
+      // FIXME(nornagon): This broke with https://crrev.com/c/1474703
       gin::Debug::SetCodeRangeDeletedCallback(
           UnregisterNonABICompliantCodeRange);
     }
