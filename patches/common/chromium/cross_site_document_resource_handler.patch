@@ -8,10 +8,10 @@ this patch can be removed once we switch to network service,
 where the embedders have a chance to design their URLLoaders.
 
 diff --git a/content/browser/loader/cross_site_document_resource_handler.cc b/content/browser/loader/cross_site_document_resource_handler.cc
-index 9e65e50de1d45d8435145b56bf7108a8c0272065..3103e4caa2adf853277774092cbd645fd8ece952 100644
+index 2151c5b9698e9a2768875d04a2297956cc4c0d41..8a316a117ab367bcbac947894cbe1bc2428de93e 100644
 --- a/content/browser/loader/cross_site_document_resource_handler.cc
 +++ b/content/browser/loader/cross_site_document_resource_handler.cc
-@@ -666,6 +666,9 @@ bool CrossSiteDocumentResourceHandler::ShouldBlockBasedOnHeaders(
+@@ -671,6 +671,9 @@ bool CrossSiteDocumentResourceHandler::ShouldBlockBasedOnHeaders(
      return false;
    }
  
@@ -22,31 +22,31 @@ index 9e65e50de1d45d8435145b56bf7108a8c0272065..3103e4caa2adf853277774092cbd645f
  }
  
 diff --git a/content/public/browser/content_browser_client.cc b/content/public/browser/content_browser_client.cc
-index d31af66d884a36b1f10ba845bd3df77394296cf1..f57d0f9d0aef241e648a6a4a3aa390efcf16c690 100644
+index 3729dcc9ea3272c943754a92c6ed1d7a1fd8fcf3..787cd81b26508d3e04956721f0e7cec2f457aa60 100644
 --- a/content/public/browser/content_browser_client.cc
 +++ b/content/public/browser/content_browser_client.cc
-@@ -61,6 +61,10 @@ ContentBrowserClient::SiteInstanceForNavigationType ContentBrowserClient::Should
-   return SiteInstanceForNavigationType::ASK_CHROMIUM;
+@@ -56,6 +56,10 @@ BrowserMainParts* ContentBrowserClient::CreateBrowserMainParts(
+   return nullptr;
  }
  
 +bool ContentBrowserClient::ShouldBypassCORB(int render_process_id) const {
 +  return false;
 +}
 +
- BrowserMainParts* ContentBrowserClient::CreateBrowserMainParts(
-     const MainFunctionParams& parameters) {
-   return nullptr;
+ void ContentBrowserClient::PostAfterStartupTask(
+     const base::Location& from_here,
+     const scoped_refptr<base::TaskRunner>& task_runner,
 diff --git a/content/public/browser/content_browser_client.h b/content/public/browser/content_browser_client.h
-index 87967723939dc85f89ed0be793f3371200860e45..ec60fa98d994b07881dbb15d397f8b7844af911a 100644
+index 4c84fb3648b3de36015b325246559f8aefe2ebd5..bf9b3a601fc16d5070e4467a258a047f47b059f3 100644
 --- a/content/public/browser/content_browser_client.h
 +++ b/content/public/browser/content_browser_client.h
-@@ -241,6 +241,9 @@ class CONTENT_EXPORT ContentBrowserClient {
-       content::RenderFrameHost* rfh,
-       content::SiteInstance* pending_site_instance) {}
+@@ -219,6 +219,9 @@ class CONTENT_EXPORT ContentBrowserClient {
+   virtual BrowserMainParts* CreateBrowserMainParts(
+       const MainFunctionParams& parameters);
  
 +  // Electron: Allows bypassing CORB checks for a renderer process.
 +  virtual bool ShouldBypassCORB(int render_process_id) const;
 +
-   // Allows the embedder to set any number of custom BrowserMainParts
-   // implementations for the browser startup code. See comments in
-   // browser_main_parts.h.
+   // Allows the embedder to change the default behavior of
+   // BrowserThread::PostAfterStartupTask to better match whatever
+   // definition of "startup" the embedder has in mind. This may be

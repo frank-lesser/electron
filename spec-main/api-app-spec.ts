@@ -667,6 +667,18 @@ describe('app module', () => {
     })
   })
 
+  describe('setPath(name, path)', () => {
+    it('does not create a new directory by default', () => {
+      const badPath = path.join(__dirname, 'music')
+
+      expect(fs.existsSync(badPath)).to.be.false
+      app.setPath('music', badPath)
+      expect(fs.existsSync(badPath)).to.be.false
+
+      expect(() => { app.getPath(badPath) }).to.throw()
+    })
+  })
+
   describe('select-client-certificate event', () => {
     let w: BrowserWindow
 
@@ -1318,6 +1330,26 @@ describe('default behavior', () => {
       app.userAgentFallback = 'test-agent/123'
       app.userAgentFallback = ''
       expect(app.userAgentFallback).to.equal(initialValue)
+    })
+  })
+
+  describe('app.allowRendererProcessReuse', () => {
+    it('should default to false', () => {
+      expect(app.allowRendererProcessReuse).to.equal(false)
+    })
+
+    it('should cause renderer processes to get new PIDs when false', async () => {
+      const output = await runTestApp('site-instance-overrides', 'false')
+      expect(output[0]).to.be.a('number').that.is.greaterThan(0)
+      expect(output[1]).to.be.a('number').that.is.greaterThan(0)
+      expect(output[0]).to.not.equal(output[1])
+    })
+
+    it('should cause renderer processes to keep the same PID when true', async () => {
+      const output = await runTestApp('site-instance-overrides', 'true')
+      expect(output[0]).to.be.a('number').that.is.greaterThan(0)
+      expect(output[1]).to.be.a('number').that.is.greaterThan(0)
+      expect(output[0]).to.equal(output[1])
     })
   })
 })

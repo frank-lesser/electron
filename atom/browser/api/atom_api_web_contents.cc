@@ -50,6 +50,7 @@
 #include "atom/common/options_switches.h"
 #include "base/message_loop/message_loop.h"
 #include "base/no_destructor.h"
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -297,20 +298,12 @@ WebContents::WebContents(v8::Isolate* isolate,
   // Read options.
   options.Get("backgroundThrottling", &background_throttling_);
 
-  // FIXME(zcbenz): We should read "type" parameter for better design, but
-  // on Windows we have encountered a compiler bug that if we read "type"
-  // from |options| and then set |type_|, a memory corruption will happen
-  // and Electron will soon crash.
-  // Remvoe this after we upgraded to use VS 2015 Update 3.
+  // Get type
+  options.Get("type", &type_);
+
   bool b = false;
-  if (options.Get("isGuest", &b) && b)
-    type_ = Type::WEB_VIEW;
-  else if (options.Get("isBackgroundPage", &b) && b)
-    type_ = Type::BACKGROUND_PAGE;
-  else if (options.Get("isBrowserView", &b) && b)
-    type_ = Type::BROWSER_VIEW;
 #if BUILDFLAG(ENABLE_OSR)
-  else if (options.Get(options::kOffscreen, &b) && b)
+  if (options.Get(options::kOffscreen, &b) && b)
     type_ = Type::OFF_SCREEN;
 #endif
 
@@ -931,6 +924,14 @@ void WebContents::Message(bool internal,
                  internal, channel, std::move(arguments));
 }
 
+void WebContents::Invoke(const std::string& channel,
+                         base::Value arguments,
+                         InvokeCallback callback) {
+  // webContents.emit('-ipc-invoke', new Event(), channel, arguments);
+  EmitWithSender("-ipc-invoke", bindings_.dispatch_context(),
+                 std::move(callback), channel, std::move(arguments));
+}
+
 void WebContents::MessageSync(bool internal,
                               const std::string& channel,
                               base::Value arguments,
@@ -1224,7 +1225,7 @@ void WebContents::SetBackgroundThrottling(bool allowed) {
   render_widget_host_impl->disable_hidden_ = !background_throttling_;
 
   if (render_widget_host_impl->is_hidden()) {
-    render_widget_host_impl->WasShown(false);
+    render_widget_host_impl->WasShown(base::nullopt);
   }
 }
 
@@ -2080,7 +2081,7 @@ v8::Local<v8::Value> WebContents::GetLastWebPreferences(
 }
 
 bool WebContents::IsRemoteModuleEnabled() const {
-  if (web_contents()->GetVisibleURL().SchemeIs("chrome-devtools")) {
+  if (web_contents()->GetVisibleURL().SchemeIs("devtools")) {
     return false;
   }
   if (auto* web_preferences = WebContentsPreferences::From(web_contents())) {
@@ -2266,7 +2267,6 @@ void WebContents::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("beginFrameSubscription", &WebContents::BeginFrameSubscription)
       .SetMethod("endFrameSubscription", &WebContents::EndFrameSubscription)
       .SetMethod("startDrag", &WebContents::StartDrag)
-      .SetMethod("isGuest", &WebContents::IsGuest)
       .SetMethod("attachToIframe", &WebContents::AttachToIframe)
       .SetMethod("detachFromOuterFrame", &WebContents::DetachFromOuterFrame)
       .SetMethod("isOffscreen", &WebContents::IsOffScreen)

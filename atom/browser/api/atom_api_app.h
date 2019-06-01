@@ -130,7 +130,7 @@ class App : public AtomBrowserClient::Delegate,
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      content::ResourceType resource_type,
+      bool is_main_frame_request,
       bool strict_enforcement,
       bool expired_previous_decision,
       const base::RepeatingCallback<
@@ -213,6 +213,8 @@ class App : public AtomBrowserClient::Delegate,
   void EnableSandbox(mate::Arguments* args);
   void SetUserAgentFallback(const std::string& user_agent);
   std::string GetUserAgentFallback();
+  void SetBrowserClientCanUseCustomSiteInstance(bool should_disable);
+  bool CanBrowserClientUseCustomSiteInstance();
 
 #if defined(OS_MACOSX)
   bool MoveToApplicationsFolder(mate::Arguments* args);

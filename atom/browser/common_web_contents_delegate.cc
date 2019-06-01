@@ -84,22 +84,23 @@ std::string RegisterFileSystem(content::WebContents* web_contents,
                                const base::FilePath& path) {
   auto* isolated_context = storage::IsolatedContext::GetInstance();
   std::string root_name(kRootName);
-  std::string file_system_id = isolated_context->RegisterFileSystemForPath(
-      storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
+  storage::IsolatedContext::ScopedFSHandle file_system =
+      isolated_context->RegisterFileSystemForPath(
+          storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
 
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
   content::RenderViewHost* render_view_host = web_contents->GetRenderViewHost();
   int renderer_id = render_view_host->GetProcess()->GetID();
-  policy->GrantReadFileSystem(renderer_id, file_system_id);
-  policy->GrantWriteFileSystem(renderer_id, file_system_id);
-  policy->GrantCreateFileForFileSystem(renderer_id, file_system_id);
-  policy->GrantDeleteFromFileSystem(renderer_id, file_system_id);
+  policy->GrantReadFileSystem(renderer_id, file_system.id());
+  policy->GrantWriteFileSystem(renderer_id, file_system.id());
+  policy->GrantCreateFileForFileSystem(renderer_id, file_system.id());
+  policy->GrantDeleteFromFileSystem(renderer_id, file_system.id());
 
   if (!policy->CanReadFile(renderer_id, path))
     policy->GrantReadFile(renderer_id, path);
 
-  return file_system_id;
+  return file_system.id();
 }
 
 FileSystem CreateFileSystemStruct(content::WebContents* web_contents,
@@ -522,15 +523,15 @@ void CommonWebContentsDelegate::DevToolsIndexPath(
       scoped_refptr<DevToolsFileSystemIndexer::FileSystemIndexingJob>(
           devtools_file_system_indexer_->IndexPath(
               file_system_path, excluded_folders,
-              base::Bind(
+              base::BindRepeating(
                   &CommonWebContentsDelegate::OnDevToolsIndexingWorkCalculated,
                   weak_factory_.GetWeakPtr(), request_id, file_system_path),
-              base::Bind(&CommonWebContentsDelegate::OnDevToolsIndexingWorked,
-                         weak_factory_.GetWeakPtr(), request_id,
-                         file_system_path),
-              base::Bind(&CommonWebContentsDelegate::OnDevToolsIndexingDone,
-                         weak_factory_.GetWeakPtr(), request_id,
-                         file_system_path)));
+              base::BindRepeating(
+                  &CommonWebContentsDelegate::OnDevToolsIndexingWorked,
+                  weak_factory_.GetWeakPtr(), request_id, file_system_path),
+              base::BindRepeating(
+                  &CommonWebContentsDelegate::OnDevToolsIndexingDone,
+                  weak_factory_.GetWeakPtr(), request_id, file_system_path)));
 }
 
 void CommonWebContentsDelegate::DevToolsStopIndexing(int request_id) {
@@ -552,8 +553,9 @@ void CommonWebContentsDelegate::DevToolsSearchInPath(
   }
   devtools_file_system_indexer_->SearchInPath(
       file_system_path, query,
-      base::Bind(&CommonWebContentsDelegate::OnDevToolsSearchCompleted,
-                 weak_factory_.GetWeakPtr(), request_id, file_system_path));
+      base::BindRepeating(&CommonWebContentsDelegate::OnDevToolsSearchCompleted,
+                          weak_factory_.GetWeakPtr(), request_id,
+                          file_system_path));
 }
 
 void CommonWebContentsDelegate::OnDevToolsIndexingWorkCalculated(

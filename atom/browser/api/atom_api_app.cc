@@ -723,7 +723,7 @@ void App::AllowCertificateError(
     int cert_error,
     const net::SSLInfo& ssl_info,
     const GURL& request_url,
-    content::ResourceType resource_type,
+    bool is_main_frame_request,
     bool strict_enforcement,
     bool expired_previous_decision,
     const base::RepeatingCallback<void(content::CertificateRequestResultType)>&
@@ -1286,6 +1286,13 @@ std::string App::GetUserAgentFallback() {
   return AtomBrowserClient::Get()->GetUserAgent();
 }
 
+void App::SetBrowserClientCanUseCustomSiteInstance(bool should_disable) {
+  AtomBrowserClient::Get()->SetCanUseCustomSiteInstance(should_disable);
+}
+bool App::CanBrowserClientUseCustomSiteInstance() {
+  return AtomBrowserClient::Get()->CanUseCustomSiteInstance();
+}
+
 #if defined(OS_MACOSX)
 bool App::MoveToApplicationsFolder(mate::Arguments* args) {
   return ui::cocoa::AtomBundleMover::Move(args);
@@ -1467,7 +1474,10 @@ void App::BuildPrototype(v8::Isolate* isolate,
 #endif
       .SetProperty("userAgentFallback", &App::GetUserAgentFallback,
                    &App::SetUserAgentFallback)
-      .SetMethod("enableSandbox", &App::EnableSandbox);
+      .SetMethod("enableSandbox", &App::EnableSandbox)
+      .SetProperty("allowRendererProcessReuse",
+                   &App::CanBrowserClientUseCustomSiteInstance,
+                   &App::SetBrowserClientCanUseCustomSiteInstance);
 }
 
 }  // namespace api
