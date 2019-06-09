@@ -27,7 +27,6 @@ class SSLCertRequestInfo;
 
 namespace atom {
 
-class AtomResourceDispatcherHostDelegate;
 class NotificationPresenter;
 class PlatformNotificationService;
 
@@ -115,7 +114,6 @@ class AtomBrowserClient : public content::ContentBrowserClient,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
-  void ResourceDispatcherHostCreated() override;
   bool CanCreateWindow(content::RenderFrameHost* opener,
                        const GURL& opener_url,
                        const GURL& opener_top_level_frame_url,
@@ -145,7 +143,6 @@ class AtomBrowserClient : public content::ContentBrowserClient,
       bool in_memory,
       const base::FilePath& relative_partition_path) override;
   network::mojom::NetworkContext* GetSystemNetworkContext() override;
-  void RegisterOutOfProcessServices(OutOfProcessServiceMap* services) override;
   base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece name) override;
   std::vector<service_manager::Manifest> GetExtraServiceManifests() override;
@@ -154,7 +151,7 @@ class AtomBrowserClient : public content::ContentBrowserClient,
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
   content::PlatformNotificationService* GetPlatformNotificationService(
       content::BrowserContext* browser_context) override;
-  content::BrowserMainParts* CreateBrowserMainParts(
+  std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       const content::MainFunctionParams&) override;
   base::FilePath GetDefaultDownloadDirectory() override;
   scoped_refptr<network::SharedURLLoaderFactory>
@@ -242,9 +239,6 @@ class AtomBrowserClient : public content::ContentBrowserClient,
 
   // list of site per affinity. weak_ptr to prevent instance locking
   std::map<std::string, content::SiteInstance*> site_per_affinities_;
-
-  std::unique_ptr<AtomResourceDispatcherHostDelegate>
-      resource_dispatcher_host_delegate_;
 
   std::unique_ptr<PlatformNotificationService> notification_service_;
   std::unique_ptr<NotificationPresenter> notification_presenter_;

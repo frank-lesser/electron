@@ -69,6 +69,8 @@ class ExtendedWebContentsObserver : public base::CheckedObserver {
  public:
   virtual void OnCloseContents() {}
   virtual void OnRendererResponsive() {}
+  virtual void OnDraggableRegionsUpdated(
+      const std::vector<mojom::DraggableRegionPtr>& regions) {}
 
  protected:
   ~ExtendedWebContentsObserver() override {}
@@ -472,7 +474,6 @@ class WebContents : public mate::TrackableObject<WebContents>,
 #endif
 
  private:
-  struct FrameDispatchHelper;
   AtomBrowserContext* GetBrowserContext() const;
 
   // Binds the given request for the ElectronBrowser API. When the
@@ -505,15 +506,13 @@ class WebContents : public mate::TrackableObject<WebContents>,
                  const std::string& channel,
                  base::Value arguments) override;
   void MessageHost(const std::string& channel, base::Value arguments) override;
+  void UpdateDraggableRegions(
+      std::vector<mojom::DraggableRegionPtr> regions) override;
+  void SetTemporaryZoomLevel(double level) override;
+  void DoGetZoomLevel(DoGetZoomLevelCallback callback) override;
 
   // Called when we receive a CursorChange message from chromium.
   void OnCursorChange(const content::WebCursor& cursor);
-
-  // Called when received a synchronous message from renderer to
-  // set temporary zoom level.
-  void OnSetTemporaryZoomLevel(content::RenderFrameHost* frame_host,
-                               double level,
-                               IPC::Message* reply_msg);
 
   // Called when received a synchronous message from renderer to
   // get the zoom level.

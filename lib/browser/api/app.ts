@@ -1,6 +1,6 @@
 import * as path from 'path'
 
-import * as electron from 'electron'
+import { deprecate, Menu } from 'electron'
 import { EventEmitter } from 'events'
 
 const bindings = process.electronBinding('app')
@@ -9,8 +9,6 @@ const { app, App } = bindings
 
 // Only one app object permitted.
 export default app
-
-const { deprecate, Menu } = electron
 
 let dockMenu: Electron.Menu | null = null
 
@@ -79,9 +77,9 @@ for (const name of events) {
 }
 
 // Property Deprecations
-deprecate.fnToProperty(app, 'accessibilitySupportEnabled', '_isAccessibilitySupportEnabled', '_setAccessibilitySupportEnabled')
-deprecate.fnToProperty(app, 'badgeCount', '_getBadgeCount', '_setBadgeCount')
-deprecate.fnToProperty(app, 'name', '_getName', '_setName')
+deprecate.fnToProperty(App.prototype, 'accessibilitySupportEnabled', '_isAccessibilitySupportEnabled', '_setAccessibilitySupportEnabled')
+deprecate.fnToProperty(App.prototype, 'badgeCount', '_getBadgeCount', '_setBadgeCount')
+deprecate.fnToProperty(App.prototype, 'name', '_getName', '_setName')
 
 // Wrappers for native classes.
 const { DownloadItem } = process.electronBinding('download_item')

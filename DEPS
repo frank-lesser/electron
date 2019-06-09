@@ -10,9 +10,9 @@ gclient_gn_args = [
 
 vars = {
   'chromium_version':
-    'ab588d36191964c4bca8de5c320534d95606c861',
+    'f200986dfaabd6aad6a4b37dad7aae42fec349e9',
   'node_version':
-    'dee0db9864a001ffc16440f725f4952a1a417069',
+    'b823596192bb790f9ea2a61022b55bf50e6daa83',
   'nan_version':
     '960dd6c70fc9eb136efdf37b4bef18fadbc3436f',
 
@@ -104,7 +104,7 @@ hooks = [
     'action': [
       'python',
       'src/electron/script/apply_all_patches.py',
-      'src/electron/patches/common/config.json',
+      'src/electron/patches/config.json',
     ],
   },
   {

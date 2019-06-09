@@ -7,7 +7,6 @@ electron
 icudtl.dat
 libEGL.so
 libGLESv2.so
-libVkICD_mock_icd.so
 libffmpeg.so
 locales/am.pak
 locales/ar.pak
@@ -65,7 +64,6 @@ locales/zh-TW.pak
 natives_blob.bin
 resources.pak
 resources/default_app.asar
-resources/electron.asar
 snapshot_blob.bin
 swiftshader/libEGL.so
 swiftshader/libGLESv2.so
